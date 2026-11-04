@@ -2,6 +2,39 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复 —— Windows 上每一轮轮询都失败（issue #4 / #1 / #2）
+
+### 怎么发现的
+Windows 用户报 `watch_start` 之后面板一直写「（返回内容不是合法 JSON：可能是代理干扰）」，
+但手工跑同一条 `gh api` 是 exit 0、HTTP 200、JSON 正常。手工复现：
+
+```powershell
+$out = gh api --include 'repos/OWNER/REPO/issues?state=all'
+($out -match "\r\n\r\n").Count   # -> 1
+($out -match "\n\n").Count       # -> 0
+```
+
+### 根因
+`parseGhInclude()` 用 `LF + LF` 切 HTTP 头与正文。HTTP 规范里的空白行是 `CRLF + CRLF`，
+而 `gh` 在各平台把它原样透传：Windows 上是 `CRLF`，Linux/macOS 上常见裸 `LF`。
+于是 Windows 上 `indexOf` 返回 -1，走 `idx < 0` 分支，把「状态行 + 响应头 + 正文」
+整段当成 JSON —— 必然抛 `Unexpected token 'H'`。
+
+### 改法
+两种分隔都认，取更早出现的那个；头行先按 `CRLF` 切，再逐行剥掉残留的 `\r`。
+POSIX 的 `LF` 路径保持原样（原有用例继续覆盖）。
+
+### 证据
+```
+node --test → 全绿（新增：CRLF 头也要能切开）
+真实 gh api --include（Windows）：status=200, items=4, JSON.parse OK
+第二轮带 If-None-Match：status=304, body 为空
+```
+
+---
+
 ## [0.9.166] - 2026-11-04 —— 弹层副行「76 秒前前」：一个重复后缀
 
 ### 怎么发现的

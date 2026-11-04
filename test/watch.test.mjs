@@ -450,6 +450,31 @@ test('parseGhInclude：解析 --include 的状态行 / ETag / 正文', () => {
   assert.equal(plain.body, '[1,2,3]')
 })
 
+test('parseGhInclude：Windows 的 CRLF 头也要能切开（gh 在 Windows 上原样透传 CRLF）', () => {
+  const CRLF = String.fromCharCode(13) + String.fromCharCode(10)
+  // 真实事故形态：头体分隔是 CRLF+CRLF。只认 LF+LF 时 idx === -1，
+  // 整段「状态行 + 响应头 + 正文」被当成正文，JSON.parse 直接炸。
+  const sample = ['HTTP/2.0 200 OK', 'ETag: W/"win"', 'X-Ratelimit-Remaining: 4997', '', '[{"number":7}]'].join(CRLF)
+  const parsed = parseGhInclude(sample)
+  assert.equal(parsed.status, 200)
+  assert.equal(parsed.etag, 'W/"win"')
+  assert.equal(parsed.remaining, 4997)
+  assert.equal(parsed.body, '[{"number":7}]', '正文里不能残留状态行或响应头')
+  // 能直接喂给 JSON.parse —— 这正是原先在 Windows 上失败的那一步
+  assert.deepEqual(JSON.parse(parsed.body), [{ number: 7 }])
+
+  // 304 没有正文：CRLF 形态同样要认出状态
+  assert.equal(parseGhInclude(['HTTP/2.0 304 Not Modified', 'etag: x', '', ''].join(CRLF)).status, 304)
+
+  // 头行里若混入裸 LF（不同 gh 版本混排），逐行剥离 CR 后仍要解析出头部
+  const mixed = 'HTTP/2.0 200 OK' + CRLF + 'x-poll-interval: 90' + String.fromCharCode(10) + CRLF + '[]'
+  assert.equal(parseGhInclude(mixed).pollInterval, 90)
+
+  // 正文自身含 CRLF（美化输出）：只切掉头，正文原样保留
+  const pretty = ['HTTP/2.0 200 OK', '', '{\r\n  "a": 1\r\n}'].join(CRLF)
+  assert.deepEqual(JSON.parse(parseGhInclude(pretty).body), { a: 1 })
+})
+
 test('jitterMs：同一条守永远同一个偏移，且在窗口内', () => {
   const a = jitterMs('owner/repo#session-1', 5000)
   const b = jitterMs('owner/repo#session-1', 5000)
