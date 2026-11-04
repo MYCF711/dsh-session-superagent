@@ -2,6 +2,36 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增 —— `ghConfigDir`：让 gh 用智能体自己的账号
+
+### 为什么
+`gh` 的登录态按平台存放在各自配置目录里（Windows 在 `%APPDATA%\GitHub CLI`，
+POSIX 在 `~/.config/gh`）。不指定时插件用的是「跑 DSH 这个人的账号」——
+对替团队干活的主理鱼来说，它发的每条评论、每个 PR 都挂在操作者名下。
+把 `GH_CONFIG_DIR` 指向一个只登录了智能体账号的目录，就能换成智能体身份；
+该目录没登录时 `gh` 直接失败（fail-closed），不会悄悄退回操作者。
+
+### 用法
+`POST /session-superagent/credentials` 传 `ghConfigDir`（绝对路径），传空串回到默认。
+面板与 `/state` 只回「配没配」，**不回报路径**（沿用 `sshKeyPath` 的处理：
+Windows 路径里的反斜杠曾让掩码漏出）。
+
+### 身份一致性
+插件调 `gh` 用它，但会话里的 `git push` 用会话自己的环境。所以绑了这个目录之后，
+唤醒消息会附一行【提交身份】，把 `GH_CONFIG_DIR` 告诉会话，避免「gh 评论挂智能体、
+git 提交挂操作者」这种一次改动两个作者的情况。
+
+### 证据
+```
+node --test → 全绿（新增：只接受绝对路径 + 面板不回显路径；唤醒消息带身份）
+真实 gh：带该目录 identity=智能体账号，不带 identity=操作者本人
+经插件 /state 读出 token scopes = 智能体账号范围
+```
+
+---
+
 ## [0.9.166] - 2026-11-04 —— 弹层副行「76 秒前前」：一个重复后缀
 
 ### 怎么发现的

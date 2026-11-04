@@ -1258,6 +1258,30 @@ test('面板术语表里写死的 6/12 必须等于服务端默认值（两边�
   assert.equal(Number(glossary[2]), body.defaults.sessionMaxWakes, '会话上限要与默认值一致')
 })
 
+test('gh 配置目录：只接受绝对路径，且面板只回「配没配」不回路径', async () => {
+  // 这条路由用 POST 设置 gh 配置目录（决定 gh 以哪个账号行动）
+  const set = (body) => call('POST', '/session-superagent/credentials', body)
+
+  // 相对路径必须拒绝：它会把 GH_CONFIG_DIR 指向一个随 cwd 漂移的位置
+  const bad = await set({ ghConfigDir: 'relative/gh' })
+  assert.equal(bad.statusCode, 400, '相对路径要被拒')
+
+  const abs = String(process.env.USERPROFILE || process.env.HOME || '') + '/.config/gh-agent'
+  const ok = await set({ ghConfigDir: abs })
+  assert.equal(ok.statusCode, 200)
+
+  // 摘要里不能出现路径本身（Windows 反斜杠曾让掩码漏出）
+  const summary = ok.json().credentials
+  assert.equal(summary.ghConfigDir, 'configured')
+  const text = JSON.stringify(summary)
+  assert.ok(!text.includes(abs), '面板摘要不得回显配置目录路径')
+  assert.ok(!/gh-agent/.test(text), '面板摘要不得回显路径片段')
+
+  // 传空串 = 回到用宿主当前登录的账号
+  const cleared = await set({ ghConfigDir: '' })
+  assert.equal(cleared.json().credentials.ghConfigDir, 'none')
+})
+
 test('代理返回网页而不是 JSON：要明说是"被拦截"，不是"代理干扰"这种含糊话', async () => {
   const { diagnoseBadBody } = await import('../lib/gh-format.js')
   const html = '<!DOCTYPE html><html><body><h1>502 Bad Gateway</h1></body></html>'

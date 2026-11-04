@@ -99,6 +99,19 @@ test('formatWatchText 是任务书：类型/标签/指派/链接齐全', () => {
   assert.match(text, /不要扩大范围/)
 })
 
+test('绑了智能体账号时，唤醒消息要交代 git 的身份，否则 gh 与 push 会用两个账号', () => {
+  const one = item(1, '2026-01-01T00:00:00Z')
+  // 没绑：不提身份，免得给默认用法加噪音
+  assert.ok(!formatWatchText('o/r', [one]).includes('【提交身份】'))
+
+  // 绑了：要把目录告诉会话，否则会话里的 git push 仍用操作者账号
+  const dir = '/home/me/.config/gh-agent'
+  const text = formatWatchText('o/r', [one], { ghConfigDir: dir })
+  assert.match(text, /【提交身份】/)
+  assert.ok(text.includes(dir), '要给出具体的配置目录：' + text)
+  assert.match(text, /GH_CONFIG_DIR/)
+})
+
 test('formatWatchText 把没铺开的条目给成编号，不丢信息', () => {
   const text = formatWatchText('o/r', [item(1, '2026-01-01T00:00:00Z')], { more: 3, restNumbers: [2, 3, 4] })
   assert.match(text, /另有 3 条：#2 #3 #4/)
