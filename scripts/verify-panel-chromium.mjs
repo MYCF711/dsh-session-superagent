@@ -451,6 +451,10 @@ function makeFixture(version) {
           title: '活动 watcher fixture', intervalSec: 60, enabled: true, observe: false,
           isolated: false, activeHours: '', note: '处理固定 issue', ackLabel: '主理鱼:已处理',
           lastPoll: iso(15000), lastWake: iso(300000), lastError: null,
+          // PR #41 专项：弹层「最近唤醒的是哪一条」。必须是**真实 /state 投影**（不是字符串函数桩），
+          // 这样浏览器里跑的是 client.js 的 wakeLine()：编号 + 标题 + 条数（>1 才出）+ 相对时间。
+          lastWakeCount: 2,
+          lastWakeItem: { number: '42', kind: 'issue', title: '修复登录页' },
           filters: { labels: ['ai-fix'], ignoreLabels: [], onlyAssigned: false, assignee: null, allowAuthors: [] },
           priority: { reopened: true, comments: true, labels: true, unassigned: false, stale: false },
           history: [
@@ -1671,6 +1675,9 @@ try {
     const panel = document.querySelector(selector)
     const trigger = document.querySelector('#orbit-app .sa-orbit-trigger')
     const rect = panel?.getBoundingClientRect()
+    const rowNodes = [...(panel?.querySelectorAll('.sa-dock-row') || [])]
+    const rows0 = rowNodes[0]
+    const rows1 = rowNodes[1]
     return {
       expanded: trigger?.getAttribute('aria-expanded'),
       label: panel?.getAttribute('aria-label'),
@@ -1683,6 +1690,11 @@ try {
       style: panel ? { position: getComputedStyle(panel).position, visibility: getComputedStyle(panel).visibility, zIndex: getComputedStyle(panel).zIndex } : null,
       rect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null,
       viewport: { width: innerWidth, height: innerHeight },
+      // PR #41：弹层第一行第二行摘要（真实 DOM）。第一行必须带 wakeLine，第二行（暂停守、无唤醒记录）
+      // 不许凭空多一行 —— 客户端是 `wakeLine(w) ? <div class="sa-dock-wake"> : null`。
+      wakeLine: rows0?.querySelector('.sa-dock-wake')?.textContent ?? null,
+      firstRowTitle: rows0?.getAttribute('title') ?? null,
+      secondRowHasWakeLine: Boolean(rows1?.querySelector('.sa-dock-wake')),
     }
   }, orbitPanel)
   check('Orbit 真实打开且 fixture watcher DOM 完整', orbitOpened.expanded === 'true'
@@ -1694,6 +1706,26 @@ try {
   check('Orbit 初始焦点落在可见非 Modal surface', orbitOpened.activeIsPanel && orbitOpened.activeConnected, {
     activeIsPanel: orbitOpened.activeIsPanel, activeConnected: orbitOpened.activeConnected,
   })
+
+  // PR #41 专项（真实 DOM，不是字符串函数桩）：弹层第一行要显示「最近唤醒的是哪一条」，
+  // tooltip（行 title）里那一行必须与可见行**逐字相同**，第二行（暂停守、lastWakeItem 为空）
+  // 不许凭空占一行 —— 客户端是 `wakeLine(w) ? <div class="sa-dock-wake"> : null`。
+  // 前缀写死「编号 + 标题 + 等 N 条 + 分隔点」，时间部分只断言非空（相对时间会随运行时刻变）。
+  const WAKE_LINE_PREFIX = '最近唤醒 issue #42 修复登录页 等 2 条 · '
+  const wakeLineDetail = {
+    wakeLine: orbitOpened.wakeLine,
+    firstRowTitle: orbitOpened.firstRowTitle,
+    titleHasWakeLine: Boolean(orbitOpened.firstRowTitle && orbitOpened.wakeLine
+      && orbitOpened.firstRowTitle.includes(orbitOpened.wakeLine)),
+    secondRowHasWakeLine: orbitOpened.secondRowHasWakeLine,
+  }
+  check('Orbit 弹层显示「最近唤醒的是哪一条」（真实 DOM：编号 + 标题 + 条数 + 时间）',
+    typeof orbitOpened.wakeLine === 'string'
+    && orbitOpened.wakeLine.startsWith(WAKE_LINE_PREFIX)
+    && orbitOpened.wakeLine.length > WAKE_LINE_PREFIX.length
+    && !orbitOpened.wakeLine.includes('failed')
+    && wakeLineDetail.titleHasWakeLine
+    && orbitOpened.secondRowHasWakeLine === false, wakeLineDetail)
   await shot('orbit-open')
 
   // 同一 trigger 真实点击关闭；点击本身会把焦点放在 trigger 上，关闭后不得丢到 body。

@@ -100,7 +100,7 @@ test('标题按码点截断，不会切出半个 emoji', async () => {
   await wait(80)
   const title = emojiEntry.lastWakeItem.title
   assert.equal(Array.from(title).length, 60, '按码点截到 60：' + title.length)
-  assert.ok(title.endsWith('😀'), 'emoji 不能被切成半个') 
+  assert.ok(title.endsWith('😀'), 'emoji 不能被切成半个')
 })
 
 test('发送真失败时保留上一批（不能把没发出去的说成处理过）', async () => {
@@ -131,4 +131,37 @@ test('没唤醒过时是 null（老状态文件 / 新条目），客户端据此
   const state = __test.readState()
   assert.equal(state.watchers['o/never#s1'].lastWakeItem, undefined, '新条目不该凭空有值')
   assert.equal(entry.lastWakeItem, undefined)
+})
+
+// 维护者补的回归（PR #41 复核）：作者四条用例都只跑「一轮」，所以「下一轮安静」这条路没人走过。
+// 客户真正看到弹层的时刻几乎总是安静轮 —— 上一轮叫醒后 30 秒面板就会再轮一次，
+// 那一轮 fresh 为空、走「没有新增」分支（顺手把 lastDeferred 清成 null）。
+// 如果在那里顺手把 lastWakeItem 也清掉（最像「每轮字段复位」的写法），功能就只在唤醒的一瞬间有效。
+// 这一条同时钉住落盘：字段不在 POLL_RESULT_FIELDS 里时内存里有、读盘就没有 ——
+// 作者的白名单用例只查字段名在不在数组里，查不到「真实路径写不下去」。
+test('叫醒之后的「安静一轮」不清空 lastWakeItem，且它真的落盘了', async () => {
+  const sent = []
+  const ctx = makeCtx({ status: 'idle', followup: (msg) => sent.push(msg) })
+  apply(ctx)
+  const entry = persist(makeEntry('o/quiet#s1'))
+  const items = [issue(12, { title: '补充登录页文档' })]
+
+  await __test.pollWithItems(ctx, entry, 60000, parsed(items))
+  await wait(80)
+  const first = { number: '12', title: '补充登录页文档', kind: 'issue' }
+  assert.equal(sent.length, 1, '第一轮要真的发出去（否则后面记什么都不算）')
+  assert.deepEqual(entry.lastWakeItem, first)
+  // 落盘断言放在这里：唤醒成功那一轮的结算里就该写进 watchers.json
+  assert.deepEqual(__test.readState().watchers['o/quiet#s1'].lastWakeItem, first,
+    '唤醒成功后 lastWakeItem 必须已落盘（白名单漏了就只剩内存里的假象）')
+
+  // 同一批条目再轮一次：它们已经进了 seen → 本轮 fresh 为空 → 走「没有新增」分支
+  entry.lastDeferred = '哨兵：没进「没有新增」分支就会留着'
+  await __test.pollWithItems(ctx, entry, 60000, parsed(items))
+  await wait(80)
+
+  assert.equal(sent.length, 1, '安静的一轮不许再叫醒一次')
+  assert.equal(entry.lastDeferred, null, '哨兵被清掉 = 确实走了「没有新增」那条分支')
+  assert.deepEqual(entry.lastWakeItem, first, '安静的一轮不能把上一批擦掉：弹层会变空')
+  assert.deepEqual(__test.readState().watchers['o/quiet#s1'].lastWakeItem, first, '读盘也还在')
 })
