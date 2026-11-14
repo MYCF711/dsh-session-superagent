@@ -85,6 +85,13 @@ test('decideWake refuses a running agent and allows an idle one', () => {
   assert.match(decideWake('running').reason, /busy/)
   assert.equal(decideWake('idle').ok, true)
   assert.equal(decideWake(undefined).ok, true, 'unknown status is not a blocker')
+  // 主 agent 在等子任务时 status 仍是 idle（status 只反映它自己的 phase）——
+  // 只有子任务探针能挡住这条路径（2026-11-15 用户实测：主任务没对话、两个子任务在跑）。
+  const busySub = decideWake('idle', { known: true, running: 2 })
+  assert.equal(busySub.ok, false, '子任务在跑时必须拒绝唤醒')
+  assert.match(busySub.reason, /2 个子任务/)
+  assert.equal(decideWake('idle', { known: true, running: 0 }).ok, true, '子任务都结束了照常唤醒')
+  assert.equal(decideWake('idle', { known: false, running: 0 }).ok, true, '探针拿不到时按旧行为继续')
 })
 
 test('formatWatchText 是任务书：类型/标签/指派/链接齐全', () => {
@@ -2878,5 +2885,61 @@ test('pollPrOnce：上一轮排队的唤醒先送出，本轮不按旧水位重�
     assert.equal(followed.length, 1, '同一条评论只能投递一次，实际投递了 ' + followed.length + ' 次')
     assert.equal(afterSecond.seenComments[7], 14, '水位必须推进到 14')
     mod.__test.clearWakeQueues()
+  })
+})
+
+test('pollPrOnce：主任务空闲但有子任务在跑时不唤醒（只记 defer，不动水位）', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('subagent-gate')
+    const followed = []
+    // 主 agent 自己报告 idle（它的 status 不看子任务），但 sessionQuery 里还有两个 child 在跑。
+    const ctx = {
+      get: (name) => {
+        if (name === 'agents') {
+          return { get: () => ({ status: 'idle', followup: async (text) => { followed.push(text) } }) }
+        }
+        if (name === 'sessionQuery') {
+          return {
+            observeSession: async () => ({
+              projections: { values: { subagentCatalog: [{ id: 'child-1' }, { id: 'child-2' }] } },
+            }),
+          }
+        }
+        if (name === 'sessions') {
+          return { get: (id) => (id === 'child-1' || id === 'child-2' ? { id } : undefined) }
+        }
+        return undefined
+      },
+    }
+
+    const rows = [{
+      number: 7,
+      title: 'PR 7',
+      isDraft: false,
+      headRefName: 'b7',
+      headRepository: { nameWithOwner: 'me/r' },
+      baseRepository: { nameWithOwner: 'o/r' },
+      comments: {
+        pageInfo: { hasPreviousPage: false },
+        nodes: [{ databaseId: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
+      },
+    }]
+    const ghRun = async (file, args) => {
+      const joined = (args || []).join(' ')
+      if (joined.includes('/issues/7/comments')) {
+        return { code: 0, stderr: '', stdout: JSON.stringify([{ id: 14, user: { login: 'someone' }, body: 'review 意见', created_at: '2026-11-13T00:00:00Z' }]) }
+      }
+      return { code: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: rows } } }) }
+    }
+
+    const entry = prEntry()
+    mod.__test.writeState({ watchers: { [entry.id]: entry } })
+    // 直接驱动这个 entry 对象：落盘在 tick 的 finally 里做，单测拿内存里的那份断言。
+    await mod.__test.pollPrOnce(ctx, entry, 300000, null, { ghRun, selfLogin: 'me' })
+
+    assert.equal(followed.length, 0, '子任务在跑时不能叫醒主任务')
+    assert.equal(entry.seenComments[7], undefined, '没叫醒就不能推进水位（否则评论会被当成已处理）')
+    assert.equal(entry.deferReason, 'busy', '记 busy，子任务结束后这轮自然重试')
+    assert.match(String(entry.lastDeferred), /2 个子任务/, '要写清为什么顺延')
   })
 })
