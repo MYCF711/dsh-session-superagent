@@ -1980,6 +1980,35 @@ async function withPrState(fn) {
   }
 }
 
+
+/** 跑一轮 pollPrOnce：造 PR#7 的一条新评论，返回 `{ entry, wake }`。 */
+async function runPrRound(mod, ctx, followed) {
+  const rows = [{
+    number: 7,
+    title: 'PR 7',
+    isDraft: false,
+    headRefName: 'b7',
+    headRepository: { nameWithOwner: 'me/r' },
+    baseRepository: { nameWithOwner: 'o/r' },
+    comments: {
+      pageInfo: { hasPreviousPage: false },
+      nodes: [{ databaseId: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
+    },
+  }]
+  const ghRun = async (file, args) => {
+    const joined = (args || []).join(' ')
+    if (joined.includes('/issues/7/comments')) {
+      return { code: 0, stderr: '', stdout: JSON.stringify([{ id: 14, user: { login: 'someone' }, body: 'review 意见', created_at: '2026-11-13T00:00:00Z' }]) }
+    }
+    return { code: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: rows } } }) }
+  }
+  const entry = prEntry()
+  mod.__test.writeState({ watchers: { [entry.id]: entry } })
+  const wake = fakeWake({ ok: true })
+  await mod.__test.pollPrOnce(ctx, entry, 300000, null, { ghRun, selfLogin: 'me', wake })
+  return { entry, wake }
+}
+
 async function prModule(tag) {
   return import('../lib/index.js?pr=' + tag + '=' + Date.now())
 }
@@ -3095,5 +3124,84 @@ test('pollPrOnce：主任务空闲但有子任务在跑时不唤醒（只记 def
     assert.equal(entry.seenComments[7], undefined, '没叫醒就不能推进水位（否则评论会被当成已处理）')
     assert.equal(entry.deferReason, 'busy', '记 busy，子任务结束后这轮自然重试')
     assert.match(String(entry.lastDeferred), /2 个子任务/, '要写清为什么顺延')
+  })
+})
+
+test('pollPrOnce：子任务门禁认 activity 字段，已结束的 child 不再拖住（review 实证 1）', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('subagent-inactive')
+    const followed = []
+    // 新版本 catalog 行自带 activity：inactive 就是已经结束，哪怕 sessions 里还留着。
+    const ctx = {
+      get: (name) => {
+        if (name === 'agents') {
+          return { get: () => ({ status: 'idle', followup: async (text) => { followed.push(text) } }) }
+        }
+        if (name === 'sessionQuery') {
+          return {
+            observeSession: async () => ({
+              projections: { values: { subagentCatalog: [{ id: 'child-inactive', kind: 'child', activity: 'inactive' }] } },
+            }),
+          }
+        }
+        // sessions 仍保留这个 child（真实宿主会留一会儿）—— 只看存在性会误判成 running
+        if (name === 'sessions') return { get: () => ({ id: 'child-inactive' }) }
+        return undefined
+      },
+    }
+    const { wake } = await runPrRound(mod, ctx, followed)
+    assert.equal(wake.calls.length, 1, 'child 已结束就必须放行，否则会话被永久顺延')
+  })
+})
+
+test('pollPrOnce：子任务门禁只数 kind=child，root/diagnostic 行不算（review 实证 2）', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('subagent-root')
+    const followed = []
+    const ctx = {
+      get: (name) => {
+        if (name === 'agents') {
+          return { get: () => ({ status: 'idle', followup: async (text) => { followed.push(text) } }) }
+        }
+        if (name === 'sessionQuery') {
+          return {
+            observeSession: async () => ({
+              projections: { values: { subagentCatalog: [{ id: 'root', kind: 'root' }, { id: 'diag', kind: 'diagnostic' }] } },
+            }),
+          }
+        }
+        if (name === 'sessions') return { get: () => ({ id: 'x' }) }
+        return undefined
+      },
+    }
+    const { wake } = await runPrRound(mod, ctx, followed)
+    assert.equal(wake.calls.length, 1, 'root 与 diagnostic 行不代表有工作在跑')
+  })
+})
+
+test('pollPrOnce：sessions 缺失时不把 running catalog 报成 0（review 实证 3）', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('subagent-no-sessions')
+    const followed = []
+    const ctx = {
+      get: (name) => {
+        if (name === 'agents') {
+          return { get: () => ({ status: 'idle', followup: async (text) => { followed.push(text) } }) }
+        }
+        if (name === 'sessionQuery') {
+          return {
+            observeSession: async () => ({
+              projections: { values: { subagentCatalog: [{ id: 'child-running', kind: 'child', activity: 'running' }] } },
+            }),
+          }
+        }
+        // sessions 服务缺失：判不了 running，但也**不能**报 known:true / running:0 放行
+        return undefined
+      },
+    }
+    const { entry, wake } = await runPrRound(mod, ctx, followed)
+    assert.equal(wake.calls.length, 0, 'activity=running 必须拒绝，不能因为 sessions 缺失就放行')
+    assert.equal(entry.seenComments[7], undefined, '没叫醒就不能推进水位')
+    assert.equal(entry.deferReason, 'busy')
   })
 })
