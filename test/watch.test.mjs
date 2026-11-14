@@ -85,6 +85,13 @@ test('decideWake refuses a running agent and allows an idle one', () => {
   assert.match(decideWake('running').reason, /busy/)
   assert.equal(decideWake('idle').ok, true)
   assert.equal(decideWake(undefined).ok, true, 'unknown status is not a blocker')
+  // 主 agent 在等子任务时 status 仍是 idle（status 只反映它自己的 phase）——
+  // 只有子任务探针能挡住这条路径（2026-11-15 用户实测：主任务没对话、两个子任务在跑）。
+  const busySub = decideWake('idle', { known: true, running: 2 })
+  assert.equal(busySub.ok, false, '子任务在跑时必须拒绝唤醒')
+  assert.match(busySub.reason, /2 个子任务/)
+  assert.equal(decideWake('idle', { known: true, running: 0 }).ok, true, '子任务都结束了照常唤醒')
+  assert.equal(decideWake('idle', { known: false, running: 0 }).ok, true, '探针拿不到时按旧行为继续')
 })
 
 test('formatWatchText 是任务书：类型/标签/指派/链接齐全', () => {
@@ -1973,6 +1980,8 @@ async function withPrState(fn) {
   }
 }
 
+
+/** 跑一轮 pollPrOnce：造 PR#7 的一条新评论，返回 `{ entry, wake }`。 */
 async function prModule(tag) {
   return import('../lib/index.js?pr=' + tag + '=' + Date.now())
 }
@@ -2999,10 +3008,7 @@ test('pollPrOnce：上一轮排队的唤醒先送出，本轮不按旧水位重�
       headRefName: 'b7',
       headRepository: { nameWithOwner: 'me/r' },
       baseRepository: { nameWithOwner: 'o/r' },
-      comments: {
-        pageInfo: { hasPreviousPage: false },
-        nodes: [{ databaseId: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
-      },
+      comments: [{ id: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
     }]
     const ghRun = async (file, args) => {
       const joined = (args || []).join(' ')
@@ -3033,4 +3039,233 @@ test('pollPrOnce：上一轮排队的唤醒先送出，本轮不按旧水位重�
     assert.equal(afterSecond.seenComments[7], 14, '水位必须推进到 14')
     mod.__test.clearWakeQueues()
   })
+})
+
+test('pollPrOnce：主任务空闲但有子任务在跑时不唤醒（只记 defer，不动水位）', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('subagent-gate')
+    const followed = []
+    // 主 agent 自己报告 idle（它的 status 不看子任务），但 sessionQuery 里还有两个 child 在跑。
+    const ctx = {
+      get: (name) => {
+        if (name === 'agents') {
+          return { get: () => ({ status: 'idle', followup: async (text) => { followed.push(text) } }) }
+        }
+        if (name === 'sessionQuery') {
+          return {
+            observeSession: async () => ({
+              projections: { values: { subagentCatalog: [{ id: 'child-1' }, { id: 'child-2' }] } },
+            }),
+          }
+        }
+        if (name === 'sessions') {
+          return { get: (id) => (id === 'child-1' || id === 'child-2' ? { id } : undefined) }
+        }
+        return undefined
+      },
+    }
+
+    const rows = [{
+      number: 7,
+      title: 'PR 7',
+      isDraft: false,
+      headRefName: 'b7',
+      headRepository: { nameWithOwner: 'me/r' },
+      baseRepository: { nameWithOwner: 'o/r' },
+      comments: [{ id: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
+    }]
+    const ghRun = async (file, args) => {
+      const joined = (args || []).join(' ')
+      if (joined.includes('/issues/7/comments')) {
+        return { code: 0, stderr: '', stdout: JSON.stringify([{ id: 14, user: { login: 'someone' }, body: 'review 意见', created_at: '2026-11-13T00:00:00Z' }]) }
+      }
+      return { code: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: rows } } }) }
+    }
+
+    const entry = prEntry()
+    mod.__test.writeState({ watchers: { [entry.id]: entry } })
+    // 直接驱动这个 entry 对象：落盘在 tick 的 finally 里做，单测拿内存里的那份断言。
+    await mod.__test.pollPrOnce(ctx, entry, 300000, null, { ghRun, selfLogin: 'me' })
+
+    assert.equal(followed.length, 0, '子任务在跑时不能叫醒主任务')
+    assert.equal(entry.seenComments[7], undefined, '没叫醒就不能推进水位（否则评论会被当成已处理）')
+    assert.equal(entry.deferReason, 'busy', '记 busy，子任务结束后这轮自然重试')
+    assert.match(String(entry.lastDeferred), /2 个子任务/, '要写清为什么顺延')
+  })
+})
+
+
+test('pollPrOnce：running 的 grandchild 也拦住唤醒（review 实证 1）', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('grandchild')
+    const followed = []
+    // 真实 catalog 每层只有直接 child：root → child-1 → grandchild-1。
+    // 只有 grandchild-1 是 live —— 只 observeSession(root) 会漏掉它。
+    const catalogs = {
+      'session-pr': [{ id: 'child-1', mode: 'subagent' }],
+      'child-1': [{ id: 'grandchild-1', mode: 'subagent' }],
+    }
+    const ctx = {
+      get: (name) => {
+        if (name === 'agents') {
+          return { get: () => ({ status: 'idle', followup: async (text) => { followed.push(text) } }) }
+        }
+        if (name === 'sessionQuery') {
+          return {
+            observeSession: async (id) => ({
+              projections: { values: { subagentCatalog: catalogs[id] || [] } },
+            }),
+          }
+        }
+        if (name === 'sessions') return { get: (id) => (id === 'grandchild-1' ? { id } : undefined) }
+        return undefined
+      },
+    }
+    const rows = [{
+      number: 7,
+      title: 'PR 7',
+      isDraft: false,
+      headRefName: 'b7',
+      headRepository: { nameWithOwner: 'me/r' },
+      baseRepository: { nameWithOwner: 'o/r' },
+      comments: [{ id: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
+    }]
+    const ghRun = async (file, args) => {
+      const joined = (args || []).join(' ')
+      if (joined.includes('/issues/7/comments')) {
+        return { code: 0, stderr: '', stdout: JSON.stringify([{ id: 14, user: { login: 'someone' }, body: 'review 意见', created_at: '2026-11-13T00:00:00Z' }]) }
+      }
+      return { code: 0, stderr: '', stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: rows } } }) }
+    }
+
+    const entry = prEntry()
+    mod.__test.writeState({ watchers: { [entry.id]: entry } })
+    await mod.__test.pollPrOnce(ctx, entry, 300000, null, { ghRun, selfLogin: 'me' })
+
+    assert.equal(followed.length, 0, 'grandchild 在跑时也不能插话（只看直接 child 会漏）')
+    assert.equal(entry.seenComments[7], undefined, '没叫醒就不能推进水位')
+    assert.equal(entry.deferReason, 'busy', 'grandchild 拒绝也要记 busy')
+    assert.match(String(entry.lastDeferred), /1 个子任务/, '要数到 grandchild')
+  })
+})
+
+test('pollPrOnce：已排队的唤醒在子任务仍在跑时不许发送（review 实证 2）', async () => {
+  const previousWindow = process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS
+  process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS = '20'
+  try {
+    await withPrState(async () => {
+      const mod = await prModule('flush-gate')
+      const deps = prDeps([{
+        number: 7,
+        title: 'PR 7',
+        isDraft: false,
+        headRefName: 'b7',
+        headRepository: { nameWithOwner: 'me/r' },
+        baseRepository: { nameWithOwner: 'o/r' },
+        comments: [{ id: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
+      }], { selfLogin: 'me' })
+
+      const followed = []
+      let running = false
+      let agentStatus = 'running'
+      const ctx = {
+        get: (name) => {
+          if (name === 'agents') {
+            // 第一轮「会话忙」把消息排进队列；之后空闲下来，但子任务在跑。
+            return { get: () => ({ status: agentStatus, followup: async (text) => { followed.push(text) } }) }
+          }
+          if (name === 'sessionQuery') {
+            return {
+              observeSession: async () => ({
+                projections: { values: { subagentCatalog: running ? [{ id: 'child-1', mode: 'subagent' }] : [] } },
+              }),
+            }
+          }
+          if (name === 'sessions') return { get: (id) => (running && id === 'child-1' ? { id } : undefined) }
+          return undefined
+        },
+      }
+
+      const entry = prEntry()
+      mod.__test.writeState({ watchers: { [entry.id]: entry } })
+      // 第一轮：会话忙 → 队列里攒一条（合并窗口 20ms，要等 timer 触发）
+      await mod.__test.pollPrOnce(ctx, entry, 300000, null, deps)
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      assert.equal(mod.__test.wakeQueueCount(entry.sessionId), 1, '第一轮应当入队')
+
+      // 下一轮：会话空闲了，但子任务**仍在跑** —— 已排队的 flush 不能把消息发出去
+      agentStatus = 'idle'
+      running = true
+      await mod.__test.pollPrOnce(ctx, entry, 300000, null, deps)
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      assert.equal(followed.length, 0, '子任务还在跑时，排队的唤醒也不许发送')
+      assert.equal(entry.seenComments[7], undefined, '没发送就不能推进水位')
+      assert.equal(mod.__test.wakeQueueCount(entry.sessionId), 1, '队列必须保留，等子任务结束再送')
+
+      // 子任务结束后：这条排队的消息终于能送出
+      running = false
+      await mod.__test.pollPrOnce(ctx, entry, 300000, null, deps)
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      assert.equal(followed.length, 1, '子任务结束后排队的那条必须送达')
+    })
+  } finally {
+    if (previousWindow === undefined) delete process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS
+    else process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS = previousWindow
+  }
+})
+
+test('pollPrOnce：检查时空闲、发送前 child 启动 → 记 busy 不退避（review 实证 3）', async () => {
+  const previousWindow = process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS
+  process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS = '20'
+  try {
+    await withPrState(async () => {
+      const mod = await prModule('merge-window')
+      const deps = prDeps([{
+        number: 7,
+        title: 'PR 7',
+        isDraft: false,
+        headRefName: 'b7',
+        headRepository: { nameWithOwner: 'me/r' },
+        baseRepository: { nameWithOwner: 'o/r' },
+        comments: [{ id: 14, author: { login: 'someone' }, createdAt: '2026-11-13T00:00:00Z', body: 'review 意见' }],
+      }], { selfLogin: 'me' })
+
+      const followed = []
+      // 第 1 次探针（pollPrOnce 的子任务闸）时空闲；第 2 次（合并窗口回调）时 child 已起。
+      let probes = 0
+      const runningNow = () => probes > 1
+      const ctx = {
+        get: (name) => {
+          if (name === 'agents') {
+            return { get: () => ({ status: 'idle', followup: async (text) => { followed.push(text) } }) }
+          }
+          if (name === 'sessionQuery') {
+            return {
+              observeSession: async () => {
+                probes += 1
+                return { projections: { values: { subagentCatalog: runningNow() ? [{ id: 'child-1', mode: 'subagent' }] : [] } } }
+              },
+            }
+          }
+          if (name === 'sessions') return { get: (id) => (runningNow() && id === 'child-1' ? { id } : undefined) }
+          return undefined
+        },
+      }
+
+      const entry = prEntry()
+      mod.__test.writeState({ watchers: { [entry.id]: entry } })
+      // 检查时空闲（入队），合并窗口 20ms 内 child 起来了
+      await mod.__test.pollPrOnce(ctx, entry, 300000, null, deps)
+      await new Promise((resolve) => setTimeout(resolve, 80))
+
+      assert.equal(followed.length, 0, '合并窗口内起来的 child 也拦住发送')
+      assert.equal(entry.seenComments[7], undefined, '没发送就不能推进水位')
+      // 子任务拒绝走「忙」：消息进队列等下一轮，而不是当投递失败去退避
+      assert.equal(mod.__test.wakeQueueCount(entry.sessionId), 1, '要排队，不能丢')
+      assert.equal(Number(entry.consecutiveFailures) || 0, 0, '子任务在跑不是失败，不能退避')
+    })
+  } finally {
+    if (previousWindow === undefined) delete process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS
+    else process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS = previousWindow
+  }
 })
