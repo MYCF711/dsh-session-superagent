@@ -43,10 +43,13 @@ test('忙时进入 FIFO，空闲后按顺序送达；送达前回调不是成功
   assert.match(first[0].reason, /busy/)
 
   agent.status = 'idle'
-  __test.flushWakeQueue(ctx, 's1')
+  // flushWakeQueue 是 async 的：await 之后再等合并窗口（WAKE_WINDOW_MS=5）到期才真正 followup。
+  await __test.flushWakeQueue(ctx, 's1')
+  await wait(20)
   assert.deepEqual(sent, ['第一条'])
   assert.equal(__test.wakeQueueCount('s1', ctx), 1)
-  __test.flushWakeQueue(ctx, 's1')
+  await __test.flushWakeQueue(ctx, 's1')
+  await wait(20)
   assert.deepEqual(sent, ['第一条', '第二条'], '必须保持 FIFO 顺序')
   assert.equal(__test.wakeQueueCount('s1', ctx), 0)
   assert.equal(first[1].ok, true, '真正发送后才回调成功')
