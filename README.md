@@ -85,6 +85,14 @@ watch_start({ repo: "owner/name", activeHours: "09:00-12:00,14:00-23:00" })
 watch_pr_start({ repo: "owner/name", activeHours: "22:00-02:00;09:00-10:00" })
 ```
 
+普通 Issue/PR 守如果只想被新评论叫醒，开启 `filters.onlyNewComments`：
+
+```text
+watch_start({ repo: "owner/name", onlyNewComments: true })
+```
+
+开启后，push、改标签等非评论更新不会唤醒。GitHub 与 Gitee 都会同时检查 discussion 和 PR review comments，取两类里的最新时间推进水位；评论查询失败不会当成「无评论」，也不会推进水位，下一轮会重试。`priority.comments` 仍然只调整批内排序，不过滤条目。面板对应「只看新评论」Switch，可用 `watch_status` 或 `/state` 的 `filters.onlyNewComments` 自查。
+
 之后它会轮询；有动静时你会收到一条 `【主理鱼】owner/name 有 N 条新动态`。处理完：
 
 ```text
@@ -156,7 +164,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-1126 项单测、43 项 preflight（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、11 项 UI 全绿（0.11.0）。
+1142 项单测、43 项 preflight（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、11 项 UI 全绿（0.11.0）。
 
 ### 贡献归属门禁
 

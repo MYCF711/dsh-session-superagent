@@ -606,6 +606,7 @@ test('Toggle 真实调用面：新增/行内编辑的普通与优先级开关全
     const nodes = nodesOf(client, queue, { sessionId: 's1' })
     const normals = [
       ['onlyAssigned', '只看已指派', false],
+      ['onlyNewComments', '只看新评论', false],
       ['observe', '仅观察', true],
       ['isolated', '隔离执行', false],
     ]
@@ -652,10 +653,10 @@ test('Toggle 真实调用面：新增/行内编辑的普通与优先级开关全
         name + '：缺优先级 id wrapper ' + key)
       assert.deepEqual(wrapper.props.children, [control])
     }
-    assert.equal(opened.filter((node) => node.type === HOST.Switch).length, 8,
-      name + '：两个 Toggle 调用面合计必须是 3 普通 + 5 优先级')
+    assert.equal(opened.filter((node) => node.type === HOST.Switch).length, 9,
+      name + '：两个 Toggle 调用面合计必须是 4 普通 + 5 优先级')
     assert.equal(new Set(opened.filter((node) => node.type === 'span' && String(node.props.id || '').startsWith(idPrefix + '-'))
-      .map((node) => node.props.id)).size, 8, name + '：8 个开关 id 必须唯一')
+      .map((node) => node.props.id)).size, 9, name + '：9 个开关 id 必须唯一')
 
     client.resetStateCalls()
     one(opened.filter((node) => node.type === HOST.Switch && node.props.label === '重开优先'),

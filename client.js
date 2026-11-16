@@ -1232,7 +1232,7 @@ window.__ModuleLoader__.load({
     const CREATE_WATCHER_VALUES = {
       repo: '', watchKind: 'issue', audit: false, adversarialAudit: false, auditMode: 'subagent',
       intervalSec: '60', labels: '', ignoreLabels: '', assignee: '',
-      activeHours: '', goal: '', ackLabel: '', onlyAssigned: false, allowAuthors: '',
+      activeHours: '', goal: '', ackLabel: '', onlyAssigned: false, onlyNewComments: false, allowAuthors: '',
       observe: false, isolated: false, workdir: '', batchLimit: '', maxWakesPerHour: '',
       sessionMaxWakes: '', isolateKeepDays: '', maxIsolated: '',
       priorityReopened: true, priorityComments: true, priorityLabels: true,
@@ -1266,6 +1266,7 @@ window.__ModuleLoader__.load({
       goal: watcher.note || (typeof watcher.goal === 'string' ? watcher.goal : (watcher.goal && watcher.goal.objective) || ''),
       ackLabel: watcher.ackLabel || ackLabelFallback(watcher, ackDefaults),
       onlyAssigned: !!(watcher.filters && watcher.filters.onlyAssigned),
+      onlyNewComments: !!(watcher.filters && watcher.filters.onlyNewComments),
       allowAuthors: (watcher.filters && Array.isArray(watcher.filters.allowAuthors) ? watcher.filters.allowAuthors : []).join(', '),
       observe: !!watcher.observe,
       isolated: !!watcher.isolated,
@@ -1308,6 +1309,7 @@ window.__ModuleLoader__.load({
       { key: 'goal', label: '目标/规则', kind: 'text', placeholder: '可选，会附在唤醒消息里' },
       { key: 'ackLabel', label: '已处理标签', kind: 'text', placeholder: '主理鱼:已处理', hint: 'watch_ack 会把同名标签打到 issue/PR 上；改名字等于换一套已处理标记' },
       { key: 'onlyAssigned', label: '只看已指派', kind: 'switch', hint: '只处理已指派给人的条目' },
+      { key: 'onlyNewComments', label: '只看新评论', kind: 'switch', when: (value) => value.watchKind !== 'pr', hint: '只有 discussion 或 PR review 新评论才唤醒；push、改标签不唤醒。「评论优先」只调整排序，不过滤。' },
       { key: 'assignee', label: '只看指派给谁', kind: 'text', when: (value) => !!value.onlyAssigned, placeholder: 'GitHub 登录名，留空 = 只要有指派就行' },
       { key: 'observe', label: '仅观察', kind: 'switch', hint: '仅观察（只记录本会唤醒哪几条，不真唤醒）' },
       // PR 守不做隔离执行：worktree 要建在本地仓库里，而 PR 在别人仓库，建出来的树没用。
@@ -1457,7 +1459,7 @@ window.__ModuleLoader__.load({
     function WatcherPriority({ value, onChange, disabled, idPrefix }) {
       const items = [
         ['priorityReopened', '重开优先', '被重开的排最前'],
-        ['priorityComments', '评论优先', '有人在等回应的靠前'],
+        ['priorityComments', '评论优先', '只排序：有人在等回应的靠前，不过滤其它更新'],
         ['priorityLabels', '标签优先', '带标签的靠前'],
         ['priorityUnassigned', '未认领优先', '没人认领的靠前（默认关：这是我们的判断，不是规则）'],
         ['priorityStale', '积压优先', '躺了 30 天以上的靠前（默认关，只展示）'],
@@ -1924,6 +1926,7 @@ window.__ModuleLoader__.load({
       if (f.labels && f.labels.length) parts.push('标签: ' + f.labels.join(','))
       if (f.ignoreLabels && f.ignoreLabels.length) parts.push('排除: ' + f.ignoreLabels.join(','))
       if (f.onlyAssigned) parts.push(f.assignee ? '只看指派给 @' + f.assignee : '只看已指派')
+      if (f.onlyNewComments) parts.push('只看新评论')
       // 设了作者白名单就要能自查；只在编辑器里出现，列表上看不出「到底生效的是谁」。
       if (f.allowAuthors && f.allowAuthors.length) parts.push('作者: ' + f.allowAuthors.join(','))
       return parts.join(' · ')
@@ -3448,6 +3451,7 @@ window.__ModuleLoader__.load({
           goal: watcher.note || (typeof watcher.goal === 'string' ? watcher.goal : (watcher.goal && watcher.goal.objective) || ''),
           ackLabel: watcher.ackLabel || ackLabelFallback(watcher, ACK_DEFAULTS),
           onlyAssigned: !!(watcher.filters && watcher.filters.onlyAssigned),
+          onlyNewComments: !!(watcher.filters && watcher.filters.onlyNewComments),
           allowAuthors: (watcher.filters && watcher.filters.allowAuthors ? watcher.filters.allowAuthors : []).join(', '),
           observe: !!watcher.observe,
           isolated: !!watcher.isolated,
@@ -3568,6 +3572,7 @@ window.__ModuleLoader__.load({
                 // filters 整块发送，三个名单都必须带上，否则改标签会顺带清空另外两项。
                 ignoreLabels: String(draft.ignoreLabels ?? '').split(',').map((v) => v.trim()).filter(Boolean),
                 onlyAssigned: !!draft.onlyAssigned,
+                onlyNewComments: !!draft.onlyNewComments,
                 assignee: String(draft.assignee ?? '').trim().replace(/^@/, '') || null,
                 allowAuthors: String(draft.allowAuthors ?? '').split(',').map((v) => v.trim().replace(/^@/, '')).filter(Boolean),
               },
@@ -3595,6 +3600,7 @@ window.__ModuleLoader__.load({
               labels: "filters",
               ignoreLabels: "filters",
               onlyAssigned: "filters",
+              onlyNewComments: "filters",
               assignee: "filters",
               allowAuthors: "filters",
               priorityReopened: "priority",
@@ -3659,11 +3665,12 @@ window.__ModuleLoader__.load({
             // 新建也必须只提交实际输入过的配置；服务端负责未提供项的默认值。
             if (valueDirty('intervalSec')) payload.intervalSec = numberOrUndefined(value.intervalSec) ?? 60
             if (valueDirty('goal')) payload.goal = value.goal || ''
-            if (['labels', 'ignoreLabels', 'onlyAssigned', 'assignee', 'allowAuthors'].some(valueDirty)) {
+            if (['labels', 'ignoreLabels', 'onlyAssigned', 'onlyNewComments', 'assignee', 'allowAuthors'].some(valueDirty)) {
               payload.filters = {
                 labels: String(value.labels ?? '').split(',').map((v) => v.trim()).filter(Boolean),
                 ignoreLabels: String(value.ignoreLabels ?? '').split(',').map((v) => v.trim()).filter(Boolean),
                 onlyAssigned: !!value.onlyAssigned,
+                onlyNewComments: !!value.onlyNewComments,
                 assignee: String(value.assignee ?? '').trim().replace(/^@/, '') || null,
                 allowAuthors: String(value.allowAuthors ?? '').split(',').map((v) => v.trim().replace(/^@/, '')).filter(Boolean),
               }
@@ -3689,7 +3696,7 @@ window.__ModuleLoader__.load({
           })()),
         })
         // 只重置既定仓库相关字段；限额、隔离策略和时段保留，连续添加不用重填。
-        const nextForm = { ...form, repo: '', goal: '', labels: '', onlyAssigned: false, allowAuthors: '' }
+        const nextForm = { ...form, repo: '', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, allowAuthors: '' }
         setForm(nextForm)
         // 这些保留下来的值已经由本次 /watch 保存，成为下一次新增的全新基线。
         createSnapshotRef.current = { ...CREATE_WATCHER_VALUES, ...nextForm }

@@ -226,7 +226,7 @@ function walkInner(node, out) {
 
 
 /** 主理鱼面板的 useState 队列：snap / tab / notice / form / token / goalDraft / goalTouched / toast / editing / draft */
-export const deskForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, activeHours: '', isolated: false, workdir: '' }
+export const deskForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: false, workdir: '' }
 export const deskQueue = (snapshot, editing = null, draft = {}, tab = 'overview', search = '', glossary = false, update = null, tabName = '主理鱼') =>
   // 末尾依次是：update / checking（0.8.38 版本检查）、settingsSection / reasonFilter / badgeFilter、
   // 以及 0.9.15 追加的 problemsOnly —— 顺序必须跟组件里的 useState 一致（测试桩按位置取值）

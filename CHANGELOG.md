@@ -6,6 +6,8 @@
 
 ### Added
 
+- **Issue/PR 守新增 `filters.onlyNewComments`**（@hZsFN #60）：`normalizeFilters` / `mergeFilters`、`watch_start`、HTTP、`/state` 与 `watch_status` 全链路保留，面板提供「只看新评论」Switch。开启后 push、改标签不唤醒；GitHub 与 Gitee 都同时检查 discussion 和 PR review comments，取最新评论时间进入 `partitionItems` 并推进水位。无评论或旧评论不推进 `seen`；查询失败单独记「评论获取失败」并保留下轮重试，不伪装成无评论。`pendingRetry` 不得让无新评论的 pending 搭车重提；普通模式行为不变。`priority.comments` 仍只排序，文档与工具说明同步。
+
 - **`activeHours` 支持多段活跃窗口**（@hZsFN #58）：`watch_start` / `watch_pr_start` / HTTP 与面板共用逐段校验，
   逗号或分号均可，任一段命中即活跃；不在任何段时取各段最小正向等待。面板每段保留两个原生时间输入，
   可添加、编辑、删除并规范拼接；空段、尾分隔符和任一非法段整串拒绝，旧非法值的运行时 fail-open 不变。

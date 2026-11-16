@@ -237,7 +237,7 @@ test('编辑保存不会清空 goal、不会抹掉没暴露的 filters、isolate
     sessionId: 's2',
     intervalSec: 60,
     goal: '把 widget 的 issue 都处理完',
-    filters: { labels: ['ai-fix'], ignoreLabels: ['wontfix'], skipClosed: false, assignee: 'alice', onlyAssigned: true },
+    filters: { labels: ['ai-fix'], ignoreLabels: ['wontfix'], skipClosed: false, assignee: 'alice', onlyAssigned: true, onlyNewComments: true },
     isolated: true,
   })).json()
   const id = created.id
@@ -262,6 +262,7 @@ test('编辑保存不会清空 goal、不会抹掉没暴露的 filters、isolate
   assert.deepEqual(watcher.filters.ignoreLabels, ['wontfix'], '没暴露的字段要保持原值')
   assert.equal(watcher.filters.skipClosed, false)
   assert.equal(watcher.filters.assignee, 'alice')
+  assert.equal(watcher.filters.onlyNewComments, true, '部分 filters 更新不能抹掉 onlyNewComments')
   assert.equal(watcher.isolated, false, 'isolated 必须能关掉')
   assert.equal(watcher.observe, true)
 

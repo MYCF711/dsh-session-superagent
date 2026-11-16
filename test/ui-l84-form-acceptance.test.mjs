@@ -83,7 +83,7 @@ function makeForm({ isolated = false } = {}) {
     // PR 响应监控的四项：watcherValuesFrom 会返回它们，夹具缺了 deepEqual 就会假红。
     watchKind: 'issue', audit: false, adversarialAudit: false, auditMode: 'subagent',
     repo: '', intervalSec: '60', goal: '', labels: '', ignoreLabels: '',
-    assignee: '', allowAuthors: '', onlyAssigned: false, activeHours: '',
+    assignee: '', allowAuthors: '', onlyAssigned: false, onlyNewComments: false, activeHours: '',
     isolated, workdir: '', observe: false, batchLimit: '', maxWakesPerHour: '',
     sessionMaxWakes: '', isolateKeepDays: '', maxIsolated: '', ackLabel: '',
     priorityReopened: true, priorityComments: true, priorityLabels: true,
@@ -255,7 +255,7 @@ test('L84c 新增与行内编辑：全部同名字段 DOM 一致，Field label/h
     assert.deepEqual(domShape(fieldNode(add, label)), domShape(fieldNode(edit, label)),
       '新增/编辑同名字段结构漂移：' + label)
   }
-  for (const label of ['只看已指派', '仅观察', '隔离执行']) {
+  for (const label of ['只看已指派', '只看新评论', '仅观察', '隔离执行']) {
     const switchOf = (tree) => one(formRoot(tree), (node) => hasClass(node, 'dt-switch-row')
       && all(node, (child) => child.type === 'button' && child.props.role === 'switch'
         && child.props['aria-label'] === label).length === 1, '找不到唯一开关字段「' + label + '」')

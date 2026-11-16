@@ -112,6 +112,7 @@
         "maxWakesPerHour",
         "observe",
         "onlyAssigned",
+        "onlyNewComments",
         "priority",
         "repo",
         "resume",
