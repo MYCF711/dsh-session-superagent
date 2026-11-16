@@ -38,6 +38,7 @@
 | `activeHours` | 稳定 |
 | `labels` | 稳定 |
 | `onlyAssigned` | 稳定 |
+| `onlyNewComments` | 稳定 |
 | `batchLimit` | 稳定 |
 | `maxWakesPerHour` | 稳定 |
 | `sessionMaxWakes` | 稳定 |

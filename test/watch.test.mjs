@@ -365,6 +365,30 @@ test('inActiveHours：普通时段 / 跨夜 / 空值', () => {
   assert.equal(inActiveHours('09:00-09:00', at(3)), true, '起止相同也按一直活跃处理')
 })
 
+test('inActiveHours：多段任一段命中，分号与混合跨夜生效，非法整串仍 fail-open', () => {
+  const at = (h, m = 0) => new Date(2026, 10, 1, h, m)
+  const office = '09:00-12:00,14:00-23:00'
+  assert.equal(inActiveHours(office, at(13)), false)
+  assert.equal(inActiveHours(office, at(13, 59)), false)
+  assert.equal(inActiveHours(office, at(14)), true)
+  assert.equal(inActiveHours(office, at(22, 59)), true)
+  assert.equal(inActiveHours(office, at(23)), false, '保持单段右开区间，23:00 已结束')
+  assert.equal(inActiveHours(office, at(23, 59)), false, '14:00-23:00 不包含 23:59')
+
+  const mixed = '22:00-02:00;09:00-10:00'
+  assert.equal(inActiveHours(mixed, at(23, 59)), true, '跨夜段覆盖 23:59')
+  assert.equal(inActiveHours(mixed, at(1, 59)), true)
+  assert.equal(inActiveHours(mixed, at(2)), false)
+  assert.equal(inActiveHours(mixed, at(9, 30)), true, '第二段也要参与 some')
+  assert.equal(inActiveHours(mixed, at(10)), false)
+  assert.equal(inActiveHours(mixed, at(12)), false)
+
+  for (const bad of ['09:00-12:00,', ',09:00-12:00', '09:00-12:00,,14:00-23:00', '09:00-12:00; ;14:00-23:00', '09:00-12:00,bad']) {
+    assert.equal(inActiveHours(bad, at(13)), true, '旧非法值兼容：整串解析失败仍 fail-open：' + bad)
+  }
+  assert.equal(inActiveHours('09:00-12:00,00:00-00:00', at(13)), true, '任一全天段仍是全天')
+})
+
 test('mergePollResult：配置字段以盘上为准，轮询结果才写回', () => {
   const stored = { id: 'a/b#s1', enabled: false, intervalSec: 30, filters: { labels: ['x'] }, seen: {}, lastPoll: 'old' }
   const polled = { id: 'a/b#s1', enabled: true, intervalSec: 999, seen: { 1: 'now' }, lastPoll: 'new', lastWake: 'w', extraGarbage: 1 }
@@ -880,6 +904,23 @@ test('时段外要算清"还有多久开门"（并把轮询安排到那一刻）
   assert.equal(msUntilActiveWindow('乱写', at(3, 0)), 0)
   // 永远 >= 1 秒，避免 0 延迟死循环
   assert.ok(msUntilActiveWindow('09:00-18:00', at(8, 59)) >= 1000)
+})
+
+test('msUntilActiveWindow：多段取最小正向等待并精确扣除当前秒数', () => {
+  const at = (h, m, s = 0) => new Date(2026, 10, 2, h, m, s)
+  const office = '09:00-12:00,14:00-23:00'
+  assert.equal(msUntilActiveWindow(office, at(12, 30)), 90 * 60 * 1000)
+  assert.equal(msUntilActiveWindow(office, at(12, 30, 45)), (90 * 60 - 45) * 1000)
+  assert.equal(msUntilActiveWindow(office, at(13, 59, 59)), 1000)
+  assert.equal(msUntilActiveWindow(office, at(14, 0, 30)), 0, '已在任一段就直接为 0')
+
+  const mixed = '22:00-02:00;09:00-10:00'
+  assert.equal(msUntilActiveWindow(mixed, at(2, 30)), 390 * 60 * 1000)
+  assert.equal(msUntilActiveWindow(mixed, at(2, 30, 30)), (390 * 60 - 30) * 1000)
+  assert.equal(msUntilActiveWindow(mixed, at(12, 30)), 570 * 60 * 1000, '跨夜段的下一次开门也要参与取最小值')
+  assert.equal(msUntilActiveWindow(mixed, at(23, 0)), 0)
+  assert.equal(msUntilActiveWindow('09:00-18:00', at(8, 59, 59)), 1000, '单段秒数精度不变')
+  assert.equal(msUntilActiveWindow('09:00-12:00,', at(13, 0, 30)), 0, '非法整串继续 fail-open')
 })
 
 test('被每小时上限挡住时，要算得出"还有多久有名额"', () => {
@@ -1755,6 +1796,31 @@ test('activeHours 格式写错要拒绝，不能静默变成全天有效（T32�
   }
 })
 
+test('validateActiveHours：逐段严格校验，逗号/分号规范化且保留段内空格', async () => {
+  const { validateActiveHours } = await import('../lib/watch.js')
+  assert.deepEqual(validateActiveHours('09:00-12:00, 14:00 - 23:00'), {
+    ok: true, normalized: '09:00-12:00,14:00 - 23:00',
+  })
+  assert.deepEqual(validateActiveHours('22:00 - 02:00; 09:00-10:00'), {
+    ok: true, normalized: '22:00 - 02:00,09:00-10:00',
+  })
+  assert.equal(validateActiveHours(' 09:00 - 23:00 ').normalized, '09:00 - 23:00', '单段只 trim 首尾，段内空格不变')
+  assert.equal(validateActiveHours('').empty, true)
+  assert.equal(validateActiveHours(null).empty, true)
+
+  for (const bad of [
+    '09:00-12:00,24:00-23:00', '09:00-12:00;14:60-23:00',
+    '09:00-12:00,', '09:00-12:00;', ',09:00-12:00', ';09:00-12:00',
+    '09:00-12:00,,14:00-23:00', '09:00-12:00;;14:00-23:00',
+    '09:00-12:00, ,14:00-23:00', '09:00-12:00; ;14:00-23:00', ',', ';',
+    '09:00-12:00,bad', '09:00~12:00,14:00-23:00',
+  ]) {
+    const result = validateActiveHours(bad)
+    assert.equal(result.ok, false, '任一非法段或空段都要拒绝整串：' + JSON.stringify(bad))
+    assert.match(result.reason, /HH:MM/, bad)
+  }
+})
+
 test('唤醒失败的原因要客户能看懂（T33 M3：以前是 session not live 这种英文内部话）', async () => {
   const { decideWake } = await import('../lib/watch.js')
   const busy = decideWake('running').reason
@@ -1884,7 +1950,9 @@ test('★ 判据只认 seen[key]，不认「这一页里最新的那条」（flo
 test('★★ 接线层：pollWithItems 必须把 seen 传给 pendingRetry', async () => {
   const { readFileSync } = await import('node:fs')
   const src = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
-  const line = src.split('\n').find((l) => l.includes('pendingRetry(entry.pending, items,'))
+  // 第二个实参在 onlyNewComments 合入后变成 `onlyNewComments ? considered : items`，
+  // 所以只锚定函数名与第一个实参，第三个实参（options）单独断言。
+  const line = src.split('\n').find((l) => l.includes('pendingRetry(entry.pending,'))
   assert.ok(line, '调用点不见了 —— 改名/删除了就先更新这条守卫')
   assert.match(line, /seen:\s*entry\.seen/,
     '不传 seen 时 pendingRetry 退化成只按重试次数判 —— 自激唤醒原样回来')

@@ -27,7 +27,7 @@ function makeDraft() {
     // PR 响应监控的四项：与 watcherValuesFrom 返回的键保持一致，否则「放弃恢复快照」会假红。
     watchKind: 'issue', audit: false, adversarialAudit: false, auditMode: 'subagent',
     intervalSec: '30', labels: 'bug', ignoreLabels: 'old', assignee: '', activeHours: '',
-    goal: '原始目标', ackLabel: '主理鱼:已处理', onlyAssigned: false, allowAuthors: 'alice',
+    goal: '原始目标', ackLabel: '主理鱼:已处理', onlyAssigned: false, onlyNewComments: false, allowAuthors: 'alice',
     observe: false, isolated: true, workdir: '', batchLimit: '', maxWakesPerHour: '',
     sessionMaxWakes: '', isolateKeepDays: '', maxIsolated: '',
     priorityReopened: true, priorityComments: true, priorityLabels: true,
@@ -39,7 +39,7 @@ function makeForm() {
   return {
     ...deskForm, watchKind: 'issue', audit: false, adversarialAudit: false, auditMode: 'subagent',
     repo: '', intervalSec: '60', goal: '', labels: '', ignoreLabels: '', assignee: '',
-    allowAuthors: '', onlyAssigned: false, activeHours: '', isolated: true, workdir: '', observe: false,
+    allowAuthors: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: true, workdir: '', observe: false,
     batchLimit: '', maxWakesPerHour: '', sessionMaxWakes: '', isolateKeepDays: '', maxIsolated: '',
   }
 }
@@ -297,7 +297,7 @@ test('L84c 新增成功只重置既定仓库字段，保留限额与隔离策略
     return response(String(url).includes('/state') ? current.snap.body : { ok: true, warnings: [] })
   })
   const queue = [...current.queue]
-  queue[3] = { ...makeForm(), repo: 'acme/demo', goal: 'goal', labels: 'bug', allowAuthors: '@alice', isolated: true, batchLimit: '3', maxWakesPerHour: '4', sessionMaxWakes: '8', isolateKeepDays: '2', maxIsolated: '4' }
+  queue[3] = { ...makeForm(), repo: 'acme/demo', goal: 'goal', labels: 'bug', allowAuthors: '@alice', onlyNewComments: true, isolated: true, batchLimit: '3', maxWakesPerHour: '4', sessionMaxWakes: '8', isolateKeepDays: '2', maxIsolated: '4' }
   const tree = current.render(queue)
   current.client.resetStateCalls()
   await one(formRoot(tree), (node) => node.type === 'button' && text(node) === '添加到当前会话', '缺添加').props.onClick()
@@ -307,6 +307,7 @@ test('L84c 新增成功只重置既定仓库字段，保留限额与隔离策略
   assert.equal(reset.next.labels, '')
   assert.equal(reset.next.allowAuthors, '')
   assert.equal(reset.next.onlyAssigned, false)
+  assert.equal(reset.next.onlyNewComments, false, '新仓库不能意外继承只看新评论')
   assert.equal(reset.next.batchLimit, '3')
   assert.equal(reset.next.maxWakesPerHour, '4')
   assert.equal(reset.next.sessionMaxWakes, '8')
@@ -316,6 +317,7 @@ test('L84c 新增成功只重置既定仓库字段，保留限额与隔离策略
   assert.ok(created)
   const body = JSON.parse(created.init.body)
   assert.equal(body.repo, 'acme/demo')
+  assert.equal(body.filters.onlyNewComments, true)
   assert.equal(body.sessionMaxWakes, 8)
   assert.equal(body.isolateKeepDays, 2)
   assert.equal(body.maxIsolated, 4)

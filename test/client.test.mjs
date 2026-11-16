@@ -1266,6 +1266,92 @@ test('活跃时段用两个原生时间选择器（起 / 止），不再让人�
   assert.ok(night.length > 0)
 })
 
+test('issue #58：HoursField 多段渲染 4 个 time input，编辑/添加/删除都规范拼接', () => {
+  const { registrations, render, stateCalls, resetStateCalls } = loadClient()
+  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const snap = {
+    loading: false, error: null,
+    body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [] },
+  }
+  const queue = deskQueue(snap, null, {}, 'trigger')
+  queue[3] = { ...deskForm, activeHours: '09:00-12:00,14:00-23:00' }
+  const nodes = walk(render(desk, queue, { sessionId: 's1' }))
+  const times = nodes.filter((n) => n.type === 'input' && n.props.type === 'time')
+  assert.equal(times.length, 4, '两段必须是两行、四个原生时间输入')
+  assert.deepEqual(times.map((n) => n.props.value), ['09:00', '12:00', '14:00', '23:00'])
+  assert.equal(times[0].props.id, 'watcher-new-activeHours', '首行起始 id 保持旧契约')
+  assert.equal(times[1].props.id, 'watcher-new-activeHours-end', '首行结束 id 保持旧契约')
+  assert.equal(new Set(times.map((n) => n.props.id)).size, 4, '额外行 id 必须唯一')
+  assert.ok(times.slice(2).every((n) => String(n.props['aria-label']).includes('第 2 段')), '额外行 aria-label 要指明段号')
+
+  resetStateCalls()
+  times[2].props.onChange({ target: { value: '15:00' } })
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '09:00-12:00,15:00-23:00')
+
+  const remove = nodes.find((n) => n.type === 'button' && n.props['aria-label'] === '删除第 2 段')
+  assert.ok(remove, '第二段要有可访问的删除按钮')
+  remove.props.onClick()
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '09:00-12:00', '删除后要拼接剩余段，不留尾逗号')
+
+  const blankQueue = deskQueue(snap, null, {}, 'trigger')
+  const blankNodes = walk(render(desk, blankQueue, { sessionId: 's1' }))
+  const add = blankNodes.find((n) => n.type === 'button' && n.props['aria-label'] === '添加时段')
+  assert.ok(add, '空白全天态也要有添加入口，不能只显示空控件')
+  add.props.onClick()
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '09:00-10:00')
+})
+
+test('HoursField 单段起止/全天/跨夜原行为不变', () => {
+  const { registrations, render, stateCalls, resetStateCalls } = loadClient()
+  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const snap = { loading: false, error: null, body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [] } }
+  const queue = deskQueue(snap, null, {}, 'trigger')
+  queue[3] = { ...deskForm, activeHours: '22:00-06:00' }
+  const nodes = walk(render(desk, queue, { sessionId: 's1' }))
+  const times = nodes.filter((n) => n.type === 'input' && n.props.type === 'time')
+  assert.equal(times.length, 2)
+  assert.ok(nodes.some((n) => n.type === '#text' && n.text === '跨夜窗口'))
+  times[0].props.onChange({ target: { value: '21:30' } })
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '21:30-06:00')
+  times[1].props.onChange({ target: { value: '05:30' } })
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '22:00-05:30')
+  const allDay = nodes.find((n) => n.type === 'button' && (n.props.children || []).join('') === '全天')
+  assert.ok(allDay)
+  allDay.props.onClick()
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '')
+
+  resetStateCalls()
+  const blank = walk(render(desk, deskQueue(snap, null, {}, 'trigger'), { sessionId: 's1' }))
+  assert.ok(blank.some((n) => n.type === '#text' && n.text === '留空 = 全天'))
+  assert.deepEqual(blank.filter((n) => n.type === 'input' && n.props.type === 'time').map((n) => n.props.value), ['', ''])
+})
+
+test('inWindowNow 多段 some：全在窗外才是时段外，任一非法段整串返回 null', () => {
+  const { registrations, render } = loadClient()
+  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const pad = (n) => String(n).padStart(2, '0')
+  const hour = new Date().getHours()
+  const windowAt = (offset) => {
+    const start = (hour + offset) % 24
+    return pad(start) + ':00-' + pad((start + 1) % 24) + ':00'
+  }
+  const insideStart = (hour + 23) % 24
+  const inside = pad(insideStart) + ':00-' + pad((insideStart + 3) % 24) + ':00'
+  const statesFor = (activeHours) => {
+    const snap = {
+      loading: false, error: null,
+      body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [watcher('a/b', { id: 'a/b#s1', activeHours })] },
+    }
+    return walk(render(desk, deskQueue(snap)))
+      .filter((n) => n.props && n.props.className === 'dt-stage')
+      .map((n) => (n.props.children || []).join(''))
+  }
+  assert.deepEqual(statesFor(windowAt(6) + ',' + windowAt(9)), ['时段外'])
+  assert.deepEqual(statesFor(windowAt(6) + ',' + inside), ['主理中'], '第二段命中就必须 active')
+  assert.deepEqual(statesFor(windowAt(6) + ',bad'), ['主理中'], '非法多段返回 null，不乱标时段外')
+  assert.deepEqual(statesFor('23:60-24:00'), ['主理中'], '非法分钟也返回 null')
+})
+
 test('弹层键盘可达：带 tabIndex=-1 且 role=dialog（打开后可聚焦进去）', () => {
   const { registrations, render } = loadClient()
   const orbit = registrations.find((r) => r.opts.id === 'session-superagent-orbit')
@@ -1778,7 +1864,7 @@ test('行内编辑保存必须真的带上 filters / priority（T24 M1：控件�
   const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   // 控件名 → 字段名的映射必须存在（否则 labels/onlyAssigned/priority* 永远发不出去）
   assert.ok(src.includes('CONTROL_TO_FIELD'), '缺少「控件名 → 字段名」映射')
-  for (const control of ['labels:', 'onlyAssigned:', 'priorityReopened:', 'priorityStale:']) {
+  for (const control of ['labels:', 'onlyAssigned:', 'onlyNewComments:', 'priorityReopened:', 'priorityStale:']) {
     assert.ok(src.includes(control), '映射里缺 ' + control)
   }
   assert.ok(src.includes('wanted.add(CONTROL_TO_FIELD[key] || key)'), '映射没被用上')
@@ -1993,7 +2079,7 @@ test('新建表单能一次设好作者名单、会话上限与隔离保留策�
     },
   }
   const form = {
-    repo: 'acme/demo', intervalSec: '60', goal: '', labels: 'bug', onlyAssigned: false,
+    repo: 'acme/demo', intervalSec: '60', goal: '', labels: 'bug', onlyAssigned: false, onlyNewComments: true,
     activeHours: '', isolated: true, workdir: '', observe: false,
     batchLimit: '3', maxWakesPerHour: '4', sessionMaxWakes: '8',
     allowAuthors: '@alice,bob', isolateKeepDays: '2', maxIsolated: '4',
@@ -2012,6 +2098,7 @@ test('新建表单能一次设好作者名单、会话上限与隔离保留策�
   assert.ok(created, '点击后必须真的发 /watch')
   const body = JSON.parse(created.options.body)
   assert.deepEqual(body.filters.allowAuthors, ['alice', 'bob'], '@ 前缀要清掉，两个人都要保留')
+  assert.equal(body.filters.onlyNewComments, true, '新建 Switch 的值必须随 filters 提交')
   assert.equal(body.sessionMaxWakes, 8)
   assert.equal(body.isolateKeepDays, 2)
   assert.equal(body.maxIsolated, 4)
@@ -2032,12 +2119,12 @@ test('编辑过滤字段时，已有作者名单和指派人不能被顺带清�
       credentials: { token: 'none', sshKeyPath: 'none', ghConfigDir: 'none', giteeToken: 'none' },
       gh: { ok: true, version: '2.0' }, defaults: {},
       watchers: [watcher('a/b', {
-        filters: { labels: ['bug'], ignoreLabels: ['old'], onlyAssigned: true, assignee: 'octocat', allowAuthors: ['alice'] },
+        filters: { labels: ['bug'], ignoreLabels: ['old'], onlyAssigned: true, onlyNewComments: true, assignee: 'octocat', allowAuthors: ['alice'] },
       })],
     },
   }
   const draft = {
-    intervalSec: '60', labels: 'bug', ignoreLabels: 'old', onlyAssigned: true,
+    intervalSec: '60', labels: 'bug', ignoreLabels: 'old', onlyAssigned: true, onlyNewComments: true,
     assignee: 'octocat', allowAuthors: 'alice', activeHours: '', goal: '', isolated: false, workdir: '',
   }
   const queue = deskQueue(snap, 'a/b#session-a/b', draft)
@@ -2052,9 +2139,60 @@ test('编辑过滤字段时，已有作者名单和指派人不能被顺带清�
   assert.ok(saved, '保存必须真的发请求')
   const body = JSON.parse(saved.options.body)
   assert.deepEqual(body.filters, {
-    labels: ['bug'], ignoreLabels: ['old'], onlyAssigned: true,
+    labels: ['bug'], ignoreLabels: ['old'], onlyAssigned: true, onlyNewComments: true,
     assignee: 'octocat', allowAuthors: ['alice'],
   }, '只要提交 filters，就必须保留其中所有已有值（测试桩不重渲染，所以不断言输入后的新值）')
+})
+
+test('只看新评论 Switch：类型显隐、真实打开回读、编辑保存与 siblings 保留', async () => {
+  const changes = []
+  const issueFields = renderPrFormFields({ intervalSec: '60', watchKind: 'issue', onlyNewComments: false }, (key, next) => changes.push([key, next]))
+  const issueSwitch = toggleOf(issueFields, '只看新评论')
+  assert.ok(issueSwitch, '普通 Issue/PR 守必须显示 Switch')
+  assert.equal(issueSwitch.props['aria-checked'], false)
+  issueSwitch.props.onClick()
+  assert.deepEqual(changes, [['onlyNewComments', true]])
+  assert.equal(toggleOf(renderPrFormFields({ intervalSec: '60', watchKind: 'pr' }), '只看新评论'), undefined,
+    '对外 PR 响应守本来就只跟评论，不渲染无效开关')
+
+  const requests = []
+  const client = loadClient({
+    fetch: async (url, options = {}) => {
+      requests.push({ url, options })
+      return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
+    },
+  })
+  const desk = client.registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const filters = { labels: ['bug'], ignoreLabels: ['old'], onlyAssigned: true, onlyNewComments: true, assignee: 'octocat', allowAuthors: ['alice'] }
+  const snap = {
+    loading: false, error: null,
+    body: { credentials: {}, watchers: [watcher('a/b', { filters })] },
+  }
+  const closed = walk(client.render(desk, deskQueue(snap)))
+  const opener = closed.find((node) => node.type === 'button' && String(node.props.className || '').includes('dt-open'))
+  assert.ok(opener, '要真实点击仓库标题打开编辑器')
+  opener.props.onClick()
+  const draftCall = client.stateCalls().find((call) => call.index === 9 && call.next && call.next.onlyNewComments === true)
+  assert.ok(draftCall, 'applyWatcherEditor 必须从 watcher.filters 回读 true')
+  const opened = walk(client.render(desk, deskQueue(snap, 'a/b#session-a/b', draftCall.next)))
+  assert.equal(toggleOf(opened, '只看新评论').props['aria-checked'], true)
+
+  // 模拟用户已经切换到 false 的受控草稿；同一 render 内记录 touched 并保存。
+  const editedDraft = { ...draftCall.next, onlyNewComments: false }
+  const editing = walk(client.render(desk, deskQueue(snap, 'a/b#session-a/b', editedDraft)))
+  toggleOf(editing, '只看新评论').props.onClick()
+  const save = editing.find((node) => node.type === 'button' && String((node.props.children || []).join('')) === '保存')
+  assert.ok(save, '修改后必须有保存按钮')
+  await save.props.onClick()
+  const saved = requests.find((request) => String(request.url).endsWith('/watch'))
+  assert.ok(saved, 'Switch 保存必须真的 POST /watch')
+  assert.deepEqual(JSON.parse(saved.options.body), {
+    repo: 'a/b', sessionId: 'session-a/b', watchKind: 'issue',
+    filters: {
+      labels: ['bug'], ignoreLabels: ['old'], onlyAssigned: true, onlyNewComments: false,
+      assignee: 'octocat', allowAuthors: ['alice'],
+    },
+  })
 })
 
 test('列表显示作者白名单与 ack 标签，编辑器也能改标签（T40 W3/W4）', () => {

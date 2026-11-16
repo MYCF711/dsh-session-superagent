@@ -768,6 +768,8 @@ window.__ModuleLoader__.load({
      * 以前这里是一整套自成体系的 inline style，和原生界面放一起能看出断层。
      */
     const DOCK_CSS = `
+/* HoursField 多段：沿用官方 dt-hours 行与 dt-btn，只补 derived 纵向列表。 */
+.sa-hours-list { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 /* Composer dock 入口：保留 20px derived 几何；交互色与焦点复用官方 dt-btn / ghost 规则。 */
 .dt-btn.sa-orbit-trigger { display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 2px; margin: 0 2px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: inherit; font: inherit; opacity: 1; }
 .dt-btn.sa-orbit-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); }
@@ -1230,7 +1232,7 @@ window.__ModuleLoader__.load({
     const CREATE_WATCHER_VALUES = {
       repo: '', watchKind: 'issue', audit: false, adversarialAudit: false, auditMode: 'subagent',
       intervalSec: '60', labels: '', ignoreLabels: '', assignee: '',
-      activeHours: '', goal: '', ackLabel: '', onlyAssigned: false, allowAuthors: '',
+      activeHours: '', goal: '', ackLabel: '', onlyAssigned: false, onlyNewComments: false, allowAuthors: '',
       observe: false, isolated: false, workdir: '', batchLimit: '', maxWakesPerHour: '',
       sessionMaxWakes: '', isolateKeepDays: '', maxIsolated: '',
       priorityReopened: true, priorityComments: true, priorityLabels: true,
@@ -1264,6 +1266,7 @@ window.__ModuleLoader__.load({
       goal: watcher.note || (typeof watcher.goal === 'string' ? watcher.goal : (watcher.goal && watcher.goal.objective) || ''),
       ackLabel: watcher.ackLabel || ackLabelFallback(watcher, ackDefaults),
       onlyAssigned: !!(watcher.filters && watcher.filters.onlyAssigned),
+      onlyNewComments: !!(watcher.filters && watcher.filters.onlyNewComments),
       allowAuthors: (watcher.filters && Array.isArray(watcher.filters.allowAuthors) ? watcher.filters.allowAuthors : []).join(', '),
       observe: !!watcher.observe,
       isolated: !!watcher.isolated,
@@ -1302,10 +1305,11 @@ window.__ModuleLoader__.load({
       { key: 'labels', label: '只处理这些标签', kind: 'text', placeholder: '逗号分隔，留空 = 全部' },
       { key: 'ignoreLabels', label: '排除这些标签', kind: 'text', placeholder: '逗号分隔，留空 = 不排除', hint: '命中任意一个就跳过，优先级高于上面的白名单' },
       { key: 'allowAuthors', label: '只理这些人提的', kind: 'text', placeholder: AUTHOR_LIST_PLACEHOLDER, hint: '不在名单里的人提的 issue/PR 不会叫醒你（Gitee 也可以填）' },
-      { key: 'activeHours', label: '活跃时段', kind: 'hours', hint: '只在这个时间段内唤醒；窗口外只攒条目，不打扰' },
+      { key: 'activeHours', label: '活跃时段', kind: 'hours', hint: '可添加多段；只在任一时段内唤醒，窗口外只攒条目，不打扰' },
       { key: 'goal', label: '目标/规则', kind: 'text', placeholder: '可选，会附在唤醒消息里' },
       { key: 'ackLabel', label: '已处理标签', kind: 'text', placeholder: '主理鱼:已处理', hint: 'watch_ack 会把同名标签打到 issue/PR 上；改名字等于换一套已处理标记' },
       { key: 'onlyAssigned', label: '只看已指派', kind: 'switch', hint: '只处理已指派给人的条目' },
+      { key: 'onlyNewComments', label: '只看新评论', kind: 'switch', when: (value) => value.watchKind !== 'pr', hint: '只有 discussion 或 PR review 新评论才唤醒；push、改标签不唤醒。「评论优先」只调整排序，不过滤。' },
       { key: 'assignee', label: '只看指派给谁', kind: 'text', when: (value) => !!value.onlyAssigned, placeholder: 'GitHub 登录名，留空 = 只要有指派就行' },
       { key: 'observe', label: '仅观察', kind: 'switch', hint: '仅观察（只记录本会唤醒哪几条，不真唤醒）' },
       // PR 守不做隔离执行：worktree 要建在本地仓库里，而 PR 在别人仓库，建出来的树没用。
@@ -1382,30 +1386,66 @@ window.__ModuleLoader__.load({
       }, 0)
     }
 
-    /** derived HoursField：两个原生时间控件，Field 的 label 只关联起始控件。 */
+    /** derived HoursField：每段两个原生时间控件；多段直接由 value 推导，不新增 hook。 */
     function HoursField({ value, onChange, id, disabled }) {
-      const match = String(value || '').match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/)
-      const start = match ? String(match[1]).padStart(2, '0') + ':' + match[2] : ''
-      const end = match ? String(match[3]).padStart(2, '0') + ':' + match[4] : ''
-      const write = (nextStart, nextEnd) => onChange(nextStart && nextEnd ? nextStart + '-' + nextEnd : '')
-      const overnight = Boolean(start && end && end <= start)
-      return h('div', { className: 'dt-hours' },
-        h('input', {
-          id, type: 'time', className: 'dt-time', value: start, 'aria-label': '起始时间', disabled,
-          onChange: (event) => write(event.target.value, end || '23:00'),
-        }),
-        h('span', { className: 'dt-hours-sep' }, '→'),
-        h('input', {
-          id: id ? id + '-end' : undefined, type: 'time', className: 'dt-time', value: end, 'aria-label': '结束时间', disabled,
-          onChange: (event) => write(start || '09:00', event.target.value),
-        }),
-        value
-          ? h('button', {
-            type: 'button', className: 'dt-btn dt-btn-sm dt-btn-ghost', disabled,
-            onClick: () => onChange(''),
-          }, '全天')
-          : h('span', { className: 'dt-hours-hint' }, '留空 = 全天'),
-        overnight ? h('span', { className: 'dt-hours-hint' }, '跨夜窗口') : null)
+      const text = String(value || '')
+      const rows = (text ? text.split(/[,;]/) : ['']).map((segment) => {
+        const match = segment.trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/)
+        return {
+          start: match ? String(match[1]).padStart(2, '0') + ':' + match[2] : '',
+          end: match ? String(match[3]).padStart(2, '0') + ':' + match[4] : '',
+        }
+      })
+      const multiple = rows.length > 1
+      const serialize = (list) => list
+        .map((row) => row.start && row.end ? row.start + '-' + row.end : '')
+        .filter(Boolean).join(',')
+      const write = (index, nextStart, nextEnd) => {
+        const next = rows.map((row) => ({ ...row }))
+        next[index] = { start: nextStart, end: nextEnd }
+        onChange(serialize(next))
+      }
+      const addButton = h('button', {
+        type: 'button', className: 'dt-btn dt-btn-sm dt-btn-ghost', disabled,
+        'aria-label': '添加时段',
+        onClick: () => onChange([serialize(rows), '09:00-10:00'].filter(Boolean).join(',')),
+      }, '添加时段')
+      const renderRow = (row, index) => {
+        const startId = index === 0 ? id : id ? id + '-' + (index + 1) + '-start' : undefined
+        const endId = index === 0 ? (id ? id + '-end' : undefined) : id ? id + '-' + (index + 1) + '-end' : undefined
+        const label = multiple ? '第 ' + (index + 1) + ' 段' : ''
+        const overnight = Boolean(row.start && row.end && row.end <= row.start)
+        return [
+          h('input', {
+            id: startId, type: 'time', className: 'dt-time', value: row.start,
+            'aria-label': label + '起始时间', disabled,
+            onChange: (event) => write(index, event.target.value, row.end || '23:00'),
+          }),
+          h('span', { className: 'dt-hours-sep' }, '→'),
+          h('input', {
+            id: endId, type: 'time', className: 'dt-time', value: row.end,
+            'aria-label': label + '结束时间', disabled,
+            onChange: (event) => write(index, row.start || '09:00', event.target.value),
+          }),
+          multiple
+            ? h('button', {
+              type: 'button', className: 'dt-btn dt-btn-sm dt-btn-ghost', disabled,
+              'aria-label': '删除第 ' + (index + 1) + ' 段',
+              onClick: () => onChange(serialize(rows.filter((_, rowIndex) => rowIndex !== index))),
+            }, '删除')
+            : value
+              ? h('button', {
+                type: 'button', className: 'dt-btn dt-btn-sm dt-btn-ghost', disabled,
+                onClick: () => onChange(''),
+              }, '全天')
+              : h('span', { className: 'dt-hours-hint' }, '留空 = 全天'),
+          overnight ? h('span', { className: 'dt-hours-hint' }, '跨夜窗口') : null,
+        ]
+      }
+      if (!multiple) return h('div', { className: 'dt-hours' }, ...renderRow(rows[0], 0), addButton)
+      return h('div', { className: 'sa-hours-list' },
+        rows.map((row, index) => h('div', { className: 'dt-hours', key: index }, ...renderRow(row, index))),
+        addButton)
     }
 
     function WatcherSwitch({ spec, value, onChange, disabled, id }) {
@@ -1419,7 +1459,7 @@ window.__ModuleLoader__.load({
     function WatcherPriority({ value, onChange, disabled, idPrefix }) {
       const items = [
         ['priorityReopened', '重开优先', '被重开的排最前'],
-        ['priorityComments', '评论优先', '有人在等回应的靠前'],
+        ['priorityComments', '评论优先', '只排序：有人在等回应的靠前，不过滤其它更新'],
         ['priorityLabels', '标签优先', '带标签的靠前'],
         ['priorityUnassigned', '未认领优先', '没人认领的靠前（默认关：这是我们的判断，不是规则）'],
         ['priorityStale', '积压优先', '躺了 30 天以上的靠前（默认关，只展示）'],
@@ -1759,17 +1799,25 @@ window.__ModuleLoader__.load({
     // paused, red = last poll failed. Icon only — details live in the
     // click-through panel, and a native tooltip carries the one-line summary.
     /**
-     * 现在是否落在活跃时段里。支持跨夜（22:00-06:00）。
-     * 解析不了就返回 null —— 宁可显示「主理中」，也不要乱标。
+     * 现在是否落在活跃时段里。支持跨夜（22:00-06:00）与逗号/分号多段，任一段命中即可。
+     * 任一段解析不了就整串返回 null —— 宁可显示「主理中」，也不要乱标。
      */
     function inWindowNow(hours) {
-      const match = String(hours || '').match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/)
-      if (!match) return null
+      const segments = String(hours || '').split(/[,;]/).map((segment) => segment.trim())
+      if (segments.some((segment) => !segment)) return null
+      const parsed = []
+      for (const segment of segments) {
+        const match = segment.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/)
+        if (!match) return null
+        const parts = match.slice(1).map(Number)
+        if (parts[0] > 23 || parts[2] > 23 || parts[1] > 59 || parts[3] > 59) return null
+        parsed.push({ from: parts[0] * 60 + parts[1], to: parts[2] * 60 + parts[3] })
+      }
       const now = new Date()
       const current = now.getHours() * 60 + now.getMinutes()
-      const from = Number(match[1]) * 60 + Number(match[2])
-      const to = Number(match[3]) * 60 + Number(match[4])
-      return from <= to ? current >= from && current < to : current >= from || current < to
+      return parsed.some(({ from, to }) => from === to
+        ? true
+        : from < to ? current >= from && current < to : current >= from || current < to)
     }
 
     function orbitStateOf(w) {
@@ -1878,6 +1926,7 @@ window.__ModuleLoader__.load({
       if (f.labels && f.labels.length) parts.push('标签: ' + f.labels.join(','))
       if (f.ignoreLabels && f.ignoreLabels.length) parts.push('排除: ' + f.ignoreLabels.join(','))
       if (f.onlyAssigned) parts.push(f.assignee ? '只看指派给 @' + f.assignee : '只看已指派')
+      if (f.onlyNewComments) parts.push('只看新评论')
       // 设了作者白名单就要能自查；只在编辑器里出现，列表上看不出「到底生效的是谁」。
       if (f.allowAuthors && f.allowAuthors.length) parts.push('作者: ' + f.allowAuthors.join(','))
       return parts.join(' · ')
@@ -3402,6 +3451,7 @@ window.__ModuleLoader__.load({
           goal: watcher.note || (typeof watcher.goal === 'string' ? watcher.goal : (watcher.goal && watcher.goal.objective) || ''),
           ackLabel: watcher.ackLabel || ackLabelFallback(watcher, ACK_DEFAULTS),
           onlyAssigned: !!(watcher.filters && watcher.filters.onlyAssigned),
+          onlyNewComments: !!(watcher.filters && watcher.filters.onlyNewComments),
           allowAuthors: (watcher.filters && watcher.filters.allowAuthors ? watcher.filters.allowAuthors : []).join(', '),
           observe: !!watcher.observe,
           isolated: !!watcher.isolated,
@@ -3522,6 +3572,7 @@ window.__ModuleLoader__.load({
                 // filters 整块发送，三个名单都必须带上，否则改标签会顺带清空另外两项。
                 ignoreLabels: String(draft.ignoreLabels ?? '').split(',').map((v) => v.trim()).filter(Boolean),
                 onlyAssigned: !!draft.onlyAssigned,
+                onlyNewComments: !!draft.onlyNewComments,
                 assignee: String(draft.assignee ?? '').trim().replace(/^@/, '') || null,
                 allowAuthors: String(draft.allowAuthors ?? '').split(',').map((v) => v.trim().replace(/^@/, '')).filter(Boolean),
               },
@@ -3549,6 +3600,7 @@ window.__ModuleLoader__.load({
               labels: "filters",
               ignoreLabels: "filters",
               onlyAssigned: "filters",
+              onlyNewComments: "filters",
               assignee: "filters",
               allowAuthors: "filters",
               priorityReopened: "priority",
@@ -3613,11 +3665,12 @@ window.__ModuleLoader__.load({
             // 新建也必须只提交实际输入过的配置；服务端负责未提供项的默认值。
             if (valueDirty('intervalSec')) payload.intervalSec = numberOrUndefined(value.intervalSec) ?? 60
             if (valueDirty('goal')) payload.goal = value.goal || ''
-            if (['labels', 'ignoreLabels', 'onlyAssigned', 'assignee', 'allowAuthors'].some(valueDirty)) {
+            if (['labels', 'ignoreLabels', 'onlyAssigned', 'onlyNewComments', 'assignee', 'allowAuthors'].some(valueDirty)) {
               payload.filters = {
                 labels: String(value.labels ?? '').split(',').map((v) => v.trim()).filter(Boolean),
                 ignoreLabels: String(value.ignoreLabels ?? '').split(',').map((v) => v.trim()).filter(Boolean),
                 onlyAssigned: !!value.onlyAssigned,
+                onlyNewComments: !!value.onlyNewComments,
                 assignee: String(value.assignee ?? '').trim().replace(/^@/, '') || null,
                 allowAuthors: String(value.allowAuthors ?? '').split(',').map((v) => v.trim().replace(/^@/, '')).filter(Boolean),
               }
@@ -3643,7 +3696,7 @@ window.__ModuleLoader__.load({
           })()),
         })
         // 只重置既定仓库相关字段；限额、隔离策略和时段保留，连续添加不用重填。
-        const nextForm = { ...form, repo: '', goal: '', labels: '', onlyAssigned: false, allowAuthors: '' }
+        const nextForm = { ...form, repo: '', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, allowAuthors: '' }
         setForm(nextForm)
         // 这些保留下来的值已经由本次 /watch 保存，成为下一次新增的全新基线。
         createSnapshotRef.current = { ...CREATE_WATCHER_VALUES, ...nextForm }
@@ -4824,7 +4877,7 @@ window.__ModuleLoader__.load({
             ['办', '唤醒会话后按仓库 AGENTS.md 主动处理，完成后 watch_ack 打标签'],
             ['唤醒', '只在会话空闲（idle）时注入一条【' + BRAND + '】消息'],
             ['过滤', '标签白名单/黑名单、只看已指派、跳过机器人/草稿/已关闭'],
-            ['时段', 'activeHours，比如 09:00-23:00，时段外只攒不唤醒'],
+            ['时段', 'activeHours，比如 09:00-12:00,14:00-23:00；多段任一命中，时段外只攒不唤醒'],
             ['隔离', 'isolated：每次唤醒开一次性 git worktree，改副本不碰主工作区'],
             ['ack', '处理完给条目打「' + (ACK_DEFAULTS && ACK_DEFAULTS.github ? ACK_DEFAULTS.github : '主理鱼:已处理') + '」标签，轮询直接跳过'],
             ['goal', '会话目标（ctx.goals），和 /goal 命令同一份状态'],
