@@ -153,6 +153,22 @@ test('onlyNewComments：评论查询失败单独记账，不唤醒、不推水�
   assert.equal(entry.etag, undefined, '不能提交 ETag，否则下轮 304 会把失败吞掉')
 })
 
+test('onlyNewComments：GitHub 评论空响应是获取失败，不是无评论', async () => {
+  const entry = makeEntry()
+  const deps = {
+    ghRun: async (_file, args) => args.includes('graphql')
+      ? { code: 1, stdout: '', stderr: 'graphql down' }
+      : { code: 0, stdout: '', stderr: '' },
+  }
+  await poll(entry, [makeItem()], deps)
+  assert.equal(entry.deferReason, null)
+  assert.equal(entry.filterCounts['评论获取失败'], 1)
+  assert.equal(entry.filterCounts['无新评论'], undefined)
+  assert.deepEqual(entry.seen, {})
+  assert.equal(entry.cursor, BASE)
+  assert.equal(entry.etag, undefined)
+})
+
 test('onlyNewComments：Gitee PR discussion 与 review 两类评论取最新', async () => {
   const entry = makeEntry(8, { id: 'gitee:acme/comments#session-only-comments', provider: 'gitee' })
   const calls = []
@@ -186,6 +202,26 @@ test('onlyNewComments：Gitee issue discussion 新评论唤醒并走 issues 端�
   assert.ok(calls.every((url) => !url.includes('comment_type=pr_comment')), '普通 issue 不应查询 PR review')
 })
 
+test('onlyNewComments：Gitee discussion 恰好 500 条时确认第 6 页为空后可唤醒', async () => {
+  const entry = makeEntry(500, { id: 'gitee:acme/comments#session-only-comments', provider: 'gitee', seen: { 500: OLD } })
+  const pages = []
+  const fetchImpl = async (url) => {
+    const page = Number(new URL(url).searchParams.get('page'))
+    pages.push(page)
+    const comments = page <= 5 ? Array.from({ length: 100 }, (_, index) => ({
+      id: (page - 1) * 100 + index + 1,
+      created_at: page === 5 && index === 99 ? NEW : OLD,
+      user: { login: 'reader' },
+    })) : []
+    return { ok: true, status: 200, text: async () => JSON.stringify(comments) }
+  }
+  await poll(entry, [makeItem(500)], { fetchImpl })
+  assert.deepEqual(pages, [1, 2, 3, 4, 5, 6])
+  assert.equal(entry.deferReason, 'observe')
+  assert.deepEqual(entry.seen, { 500: NEW })
+  assert.equal(entry.filterCounts['评论获取失败'], undefined)
+})
+
 test('onlyNewComments：Gitee discussion 超过 500 条时按获取失败重试，不假装已看到最新', async () => {
   const entry = makeEntry(501, { id: 'gitee:acme/comments#session-only-comments', provider: 'gitee', seen: { 501: OLD } })
   const pages = []
@@ -198,7 +234,7 @@ test('onlyNewComments：Gitee discussion 超过 500 条时按获取失败重试�
     return { ok: true, status: 200, text: async () => JSON.stringify(comments) }
   }
   await poll(entry, [makeItem(501)], { fetchImpl })
-  assert.deepEqual(pages, [1, 2, 3, 4, 5])
+  assert.deepEqual(pages, [1, 2, 3, 4, 5, 6])
   assert.equal(entry.deferReason, null)
   assert.equal(entry.filterCounts['评论获取失败'], 1)
   assert.equal(entry.filterCounts['无新评论'], undefined)
