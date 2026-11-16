@@ -290,7 +290,7 @@ const pausedSnapshot = {
 const blankForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, activeHours: '', isolated: false, workdir: '' }
 const editKey = 'MYCF711/dsh-session-superagent#s1'
 const editDraft = {
-  intervalSec: '60', labels: 'ai-fix', ignoreLabels: '', assignee: '', activeHours: '09:00-23:00',
+  intervalSec: '60', labels: 'ai-fix', ignoreLabels: '', assignee: '', activeHours: '09:00-12:00,14:00-23:00',
   goal: '把 0.8.x 的文档补齐', ackLabel: '主理鱼:已处理', onlyAssigned: false, allowAuthors: '',
   observe: false, isolated: true, workdir: 'E:/temp/iso', batchLimit: '', maxWakesPerHour: '',
   sessionMaxWakes: '', isolateKeepDays: '', maxIsolated: '', priorityReopened: true,
