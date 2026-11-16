@@ -498,10 +498,22 @@ export async function checkAttribution(options = {}) {
     for (const ref of referencedNumbers(message)) {
       let record = issueCache.get(ref)
       if (!record) {
-        const issue = await getIssue(repo, ref, context)
-        const comments = issue?.pull_request ? [] : await getIssueComments(repo, ref, context)
-        record = { issue, comments }
+        try {
+          const issue = await getIssue(repo, ref, context)
+          const comments = issue?.pull_request ? [] : await getIssueComments(repo, ref, context)
+          record = { issue, comments }
+        } catch (error) {
+          // 提交信息里出现了本仓库不存在的 #N：现场记录常把**别的仓库**的编号原样抄进来
+          // （"#95 / #96 / #97 被重复唤醒"这种）。那不是可归因的代码来源，跳过即可；
+          // 真正的 API 故障（401 / 403 / 5xx）仍然要上抛 —— 一次 404 不该让整条门禁 ERROR。
+          if (error?.status === 404) record = { missing: true }
+          else throw error
+        }
         issueCache.set(ref, record)
+      }
+      if (record.missing) {
+        skipped.push({ type: 'missing-issue', ref, sha: commit.sha })
+        continue
       }
       if (record.issue?.pull_request) {
         skipped.push({ type: 'pr-reference', ref, sha: commit.sha })
