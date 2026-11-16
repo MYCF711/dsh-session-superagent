@@ -24,6 +24,7 @@
       "activeHours": "stable",
       "labels": "stable",
       "onlyAssigned": "stable",
+      "onlyNewComments": "stable",
       "batchLimit": "stable",
       "maxWakesPerHour": "stable",
       "sessionMaxWakes": "stable",

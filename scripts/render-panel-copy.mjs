@@ -46,10 +46,9 @@ const snap = {
 const { registrations, render } = loadClient()
 const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
 
-// 「监控类型」切到 PR：审计 / 对抗性审计 / 执行方式三项的 `when` 是 `watchKind === 'pr'`，
-// 停在默认的 issue 上就永远不会渲染，文案快照里也就看不到它们。
+// 触发页同时收集 Issue 与 PR 两种类型：审计三项只在 PR 显示，onlyNewComments 只在 Issue 显示。
 // 只在本脚本里改（deskForm 是模块级对象，独立进程跑完即弃），不动测试夹具的默认形态。
-deskForm.watchKind = 'pr'
+deskForm.watchKind = 'issue'
 
 const TABS = [
   ['overview', '总览'],
@@ -65,11 +64,14 @@ lines.push('四个 tab 上客户能读到的文字。改文案会让 `--check` �
 lines.push('')
 
 for (const [tab, label] of TABS) {
-  const tree = render(desk, deskQueue(snap, null, {}, tab))
-  const text = walk(tree)
-    .filter((node) => node.type === '#text')
-    .map((node) => node.text.trim())
-    .filter(Boolean)
+  const kinds = tab === 'trigger' ? ['issue', 'pr'] : [deskForm.watchKind]
+  const text = kinds.flatMap((kind) => {
+    deskForm.watchKind = kind
+    return walk(render(desk, deskQueue(snap, null, {}, tab)))
+      .filter((node) => node.type === '#text')
+      .map((node) => node.text.trim())
+      .filter(Boolean)
+  })
   const unique = []
   for (const item of text) if (!unique.includes(item)) unique.push(item)
   lines.push('## ' + label + '（' + tab + '）')

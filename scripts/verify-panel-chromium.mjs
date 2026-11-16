@@ -158,6 +158,7 @@ if (process.argv.includes('--print-paths')) {
 }
 const SESSION_ID = 'session-panel-chromium-fixture'
 const ISSUE58_REPO = 'fixture/active-hours'
+const ISSUE60_REPO = 'fixture/only-new-comments'
 // 每次验收用独立任务空间：崩溃重跑时不能复用上一次残留页面/事件监听，否则会伪造失败。
 const SPACE_NAME = 'dsh-full-panel-chromium-deep-ui-' + String(Date.now())
 const results = []
@@ -172,13 +173,17 @@ const isIssue58WatchMutation = (row) => {
   if (row.method === 'GET' || row.path !== '/session-superagent/watch') return false
   try { return JSON.parse(row.body || '{}').repo === ISSUE58_REPO } catch { return false }
 }
+const isIssue60WatchMutation = (row) => {
+  if (row.method === 'GET' || row.path !== '/session-superagent/watch') return false
+  try { return JSON.parse(row.body || '{}').repo === ISSUE60_REPO } catch { return false }
+}
 const debugLines = []
 const debug = (line) => debugLines.push(line)
 const unverified = [
   '未进入需要真实会话与凭证的 DSH Web GUI；本脚本验证独立 loopback 页面中真实 client.js 的 slot 注册以及 desk/orbit Component 挂载。',
   '真实 StatusOrbit 签名无 props；sessionId 传给 desk，Orbit watcher 数据由同一 fixture /state API 提供，不虚构 ctx/slot 参数。',
   '门禁/模型场景（U1/U5）的 GET /gates、GET /gates/models、POST /gates/preview 与 POST /gates 全部打本脚本的 loopback fixture：不是真实 WebView、不是真实服务端、不是真实模型；只验面板在真实 React 18 下的行为，不验服务端持久化。',
-  '未执行真实 GitHub/Gitee 保存、安装更新、删除、暂停、恢复或 watcher 轮询；Issue #58 仅允许 fixture/active-hours 在 loopback 保存两段→一段，门禁 POST 亦只打 fixture；另有两条显式防写探针（guardProbe 与 Issue #35 确认点击）仍必须 403。',
+  '未执行真实 GitHub/Gitee 保存、安装更新、删除、暂停、恢复或 watcher 轮询；Issue #58 仅允许 fixture/active-hours 在 loopback 保存两段→一段，Issue #60 仅允许 fixture/only-new-comments 在 loopback 创建/编辑 Switch 并回读，门禁 POST 亦只打 fixture；另有两条显式防写探针（guardProbe 与 Issue #35 确认点击）仍必须 403。',
   '未验物理读屏、触摸、IME、真实 GitHub/Gitee 响应与真实 watcher 状态变化。',
 ]
 
@@ -460,7 +465,7 @@ function makeFixture(version) {
           title: '活动 watcher fixture', intervalSec: 60, enabled: true, observe: false,
           isolated: false, activeHours: '', note: '处理固定 issue', ackLabel: '主理鱼:已处理',
           lastPoll: iso(15000), lastWake: iso(300000), lastError: null,
-          filters: { labels: ['ai-fix'], ignoreLabels: [], onlyAssigned: false, assignee: null, allowAuthors: [] },
+          filters: { labels: ['ai-fix'], ignoreLabels: [], onlyAssigned: false, onlyNewComments: false, assignee: null, allowAuthors: [] },
           priority: { reopened: true, comments: true, labels: true, unassigned: false, stale: false },
           history: [
             { at: iso(300000), numbers: [42], ok: true, reason: null },
@@ -479,7 +484,7 @@ function makeFixture(version) {
           isolated: false, activeHours: '09:00-23:00', note: '', ackLabel: '主理鱼:已处理',
           lastPoll: iso(900000), lastWake: null, lastError: null,
           deferReason: 'active-hours', lastDeferred: '不在活跃时段（09:00-23:00）：只攒条目，不唤醒',
-          filters: { labels: [], ignoreLabels: [], onlyAssigned: false, assignee: null, allowAuthors: [] },
+          filters: { labels: [], ignoreLabels: [], onlyAssigned: false, onlyNewComments: false, assignee: null, allowAuthors: [] },
           priority: { reopened: true, comments: true, labels: true, unassigned: false, stale: false },
           history: [], filteredLog: [], filterCounts: {}, events: [],
           repoAccess: { repo: 'acme/paused', push: true, hasIssues: true },
@@ -634,7 +639,7 @@ async function startServer(installed, clientSource, fixture) {
               title: 'Issue #58 多段时段 fixture', intervalSec: 60, enabled: true, observe: false,
               isolated: false, activeHours: '', note: '', ackLabel: '主理鱼:已处理',
               lastPoll: new Date().toISOString(), lastWake: null, lastError: null,
-              filters: { labels: [], ignoreLabels: [], onlyAssigned: false, assignee: null, allowAuthors: [] },
+              filters: { labels: [], ignoreLabels: [], onlyAssigned: false, onlyNewComments: false, assignee: null, allowAuthors: [] },
               priority: { reopened: true, comments: true, labels: true, unassigned: false, stale: false },
               history: [], filteredLog: [], filterCounts: {}, events: [],
               quality: { itemsWoken: 0, itemsAcked: 0, actionRate: 0 },
@@ -644,6 +649,29 @@ async function startServer(installed, clientSource, fixture) {
           }
           if (typeof next.activeHours === 'string') entry.activeHours = next.activeHours
           return json(response, 200, { ok: true, id, activeHours: entry.activeHours, warnings: [] })
+        }
+        // Issue #60：独立 loopback 仓库，真实保存 filters 供后续 GET /state 回读。
+        if (next.repo === ISSUE60_REPO && next.sessionId === SESSION_ID) {
+          const id = `${ISSUE60_REPO}#${SESSION_ID}`
+          let entry = fixture.state.watchers.find((item) => item.id === id)
+          if (!entry) {
+            entry = {
+              id, repo: ISSUE60_REPO, provider: 'github', sessionId: SESSION_ID,
+              title: 'Issue #60 只看新评论 fixture', intervalSec: 60, enabled: true, observe: false,
+              isolated: false, activeHours: '', note: '', ackLabel: '主理鱼:已处理',
+              lastPoll: new Date().toISOString(), lastWake: null, lastError: null,
+              filters: { labels: [], ignoreLabels: [], onlyAssigned: false, onlyNewComments: false, assignee: null, allowAuthors: [] },
+              priority: { reopened: true, comments: true, labels: true, unassigned: false, stale: false },
+              history: [], filteredLog: [], filterCounts: {}, events: [],
+              quality: { itemsWoken: 0, itemsAcked: 0, actionRate: 0 },
+              repoAccess: { repo: ISSUE60_REPO, push: true, hasIssues: true }, daily: { days: 0, total: 0 },
+            }
+            fixture.state.watchers.push(entry)
+          }
+          if (next.filters && typeof next.filters === 'object') {
+            entry.filters = { ...entry.filters, ...next.filters }
+          }
+          return json(response, 200, { ok: true, id, filters: entry.filters, warnings: [] })
         }
       }
       if (url.pathname.startsWith('/session-superagent/') && method !== 'GET') {
@@ -885,7 +913,7 @@ try {
     checked: document.querySelector('#watcher-new [role=switch]')?.getAttribute('aria-checked'),
     dirty: document.querySelector('#watcher-new .dt-savebar')?.textContent.includes('未保存'),
   }))
-  check('trigger 官方 Switch 可切换且只改本地草稿', switchBefore.count === 3
+  check('trigger 官方 Switch 可切换且只改本地草稿', switchBefore.count === 4
     && switchAfter.checked !== switchBefore.checked && switchAfter.dirty === true,
   { before: switchBefore, after: switchAfter })
   await shot('trigger')
@@ -1248,6 +1276,57 @@ try {
     && issue58Created?.activeHours === '09:00-12:00', { request: issue58EditBody, stored: issue58Created?.activeHours })
   // 恢复既有两条 watcher，后续 Orbit / mutation 基线不受本场景影响。
   fixture.state.watchers = fixture.state.watchers.filter((item) => item.repo !== ISSUE58_REPO)
+
+  // ── Issue #60：只看新评论 Switch 的真实创建、编辑保存与回读（仅 loopback fixture）──
+  await openTab('触发')
+  await page.waitForSelector('#watcher-new-repo', { state: 'visible', timeout: 5000 })
+  await page.fill('#watcher-new-repo', ISSUE60_REPO)
+  const issue60CreateSwitch = "#watcher-new-onlyNewComments [role=switch], #watcher-new-onlyNewComments[role=switch]"
+  await page.click(issue60CreateSwitch)
+  await page.waitForFunction(() => document.querySelector("#watcher-new-onlyNewComments [role=switch], #watcher-new-onlyNewComments[role=switch]")
+    ?.getAttribute('aria-checked') === 'true', undefined, { timeout: 5000 })
+  await page.click('#watcher-new .dt-savebar button[type=submit]')
+  await page.waitForFunction(() => document.getElementById('watcher-new-repo')?.value === ''
+    && !document.querySelector('#watcher-new .dt-savebar'), undefined, { timeout: 10000 })
+  const issue60CreateBody = JSON.parse([...apiLog].reverse().find(isIssue60WatchMutation)?.body || '{}')
+  const issue60Created = fixture.state.watchers.find((item) => item.repo === ISSUE60_REPO)
+  check('Issue #60 Chromium 新建 Switch 保存 true 到 loopback', issue60CreateBody.filters?.onlyNewComments === true
+    && issue60Created?.filters?.onlyNewComments === true,
+  { request: issue60CreateBody, stored: issue60Created?.filters })
+
+  const openIssue60 = async () => {
+    await openTab('总览')
+    await page.waitForFunction((repo) => [...document.querySelectorAll('.dt-list .dt-open')]
+      .some((node) => node.textContent === repo), ISSUE60_REPO, { timeout: 10000 })
+    await page.evaluate((repo) => {
+      const opener = [...document.querySelectorAll('.dt-list .dt-open')].find((node) => node.textContent === repo)
+      opener?.setAttribute('data-issue60-open', '1')
+      opener?.scrollIntoView({ block: 'center', inline: 'nearest' })
+    }, ISSUE60_REPO)
+    await page.click('[data-issue60-open]')
+    await page.waitForSelector("form[data-mode='edit'] [role=switch][aria-label='只看新评论']", { state: 'visible', timeout: 5000 })
+  }
+  await openIssue60()
+  const issue60ReadTrue = await page.evaluate(() => document.querySelector("form[data-mode='edit'] [role=switch][aria-label='只看新评论']")
+    ?.getAttribute('aria-checked'))
+  check('Issue #60 Chromium 编辑重新打开回读 true', issue60ReadTrue === 'true', { ariaChecked: issue60ReadTrue })
+
+  await page.click("form[data-mode='edit'] [role=switch][aria-label='只看新评论']")
+  await page.waitForFunction(() => document.querySelector("form[data-mode='edit'] [role=switch][aria-label='只看新评论']")
+    ?.getAttribute('aria-checked') === 'false', undefined, { timeout: 5000 })
+  await page.click("form[data-mode='edit'] .dt-savebar button[type=submit]")
+  await page.waitForFunction(() => !document.querySelector("form[data-mode='edit']"), undefined, { timeout: 10000 })
+  const issue60EditBody = JSON.parse([...apiLog].reverse().find(isIssue60WatchMutation)?.body || '{}')
+  check('Issue #60 Chromium 编辑保存 false 且保留 filters siblings', issue60EditBody.filters?.onlyNewComments === false
+    && issue60Created?.filters?.onlyNewComments === false
+    && Array.isArray(issue60EditBody.filters?.labels) && Array.isArray(issue60EditBody.filters?.ignoreLabels)
+    && Array.isArray(issue60EditBody.filters?.allowAuthors),
+  { request: issue60EditBody, stored: issue60Created?.filters })
+  await openIssue60()
+  const issue60ReadFalse = await page.evaluate(() => document.querySelector("form[data-mode='edit'] [role=switch][aria-label='只看新评论']")
+    ?.getAttribute('aria-checked'))
+  check('Issue #60 Chromium 再次编辑回读 false', issue60ReadFalse === 'false', { ariaChecked: issue60ReadFalse })
+  fixture.state.watchers = fixture.state.watchers.filter((item) => item.repo !== ISSUE60_REPO)
 
   // 设置总壳与五个分区全部真实点击。
   await openTab('设置')
@@ -1902,7 +1981,7 @@ try {
   check('完整走查无未预期页面错误或外部请求', errors.capture.length === 0 && errors.network.length === 0, errors)
   // 门禁与 Issue #58 的 POST 都是本 harness 自己的 loopback fixture 记录，不是真实写操作；
   // 这里只把「这两条明确白名单之外的 mutation」计为违规。
-  const mutations = apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates') && !isIssue58WatchMutation(row))
+  const mutations = apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates') && !isIssue58WatchMutation(row) && !isIssue60WatchMutation(row))
   const traceCalls = apiLog.filter((row) => row.path.startsWith('/session-superagent/trace'))
   const updateCalls = apiLog.filter((row) => row.path.startsWith('/session-superagent/update'))
   check('fake state/update/trace 均实际命中 loopback', apiLog.some((row) => row.path === '/session-superagent/state')
@@ -1918,7 +1997,7 @@ try {
   })
   check('fixture mutation 防写 guard 真实返回 403', guardProbe.status === 403
     && String(guardProbe.body).includes('fixture-read-only')
-    && apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates') && !isIssue58WatchMutation(row)).length === 1
+    && apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates') && !isIssue58WatchMutation(row) && !isIssue60WatchMutation(row)).length === 1
     && apiLog.at(-1)?.body.includes('fixture-read-only-guard-probe'),
   { status: guardProbe.status, body: guardProbe.body, request: apiLog.at(-1) })
   // ── 第四阶段 · Issue #35：确认层在真实 composer dock 里的几何与真实点击 ─────────────

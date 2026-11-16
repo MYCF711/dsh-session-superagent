@@ -14,6 +14,7 @@ const configurableFields = (watcher) => ({
   ignoreLabels: watcher.ignoreLabels,
   assignee: watcher.assignee,
   allowAuthors: watcher.allowAuthors,
+  onlyNewComments: watcher.onlyNewComments,
 })
 
 test('statusView 透传全部可写配置字段及 priority 扩展项', () => {
@@ -31,6 +32,7 @@ test('statusView 透传全部可写配置字段及 priority 扩展项', () => {
       labels: ['bug'],
       ignoreLabels: ['wontfix', 'duplicate'],
       onlyAssigned: true,
+      onlyNewComments: true,
       assignee: 'octocat',
       allowAuthors: ['alice', 'bob'],
     },
@@ -49,6 +51,7 @@ test('statusView 透传全部可写配置字段及 priority 扩展项', () => {
     ignoreLabels: ['wontfix', 'duplicate'],
     assignee: 'octocat',
     allowAuthors: ['alice', 'bob'],
+    onlyNewComments: true,
   })
 })
 
@@ -67,6 +70,7 @@ test('statusView 缺省配置有明确默认值，priority 形状与 DEFAULT_PRI
     ignoreLabels: [],
     assignee: null,
     allowAuthors: [],
+    onlyNewComments: false,
   })
   assert.deepEqual(watcher.priority, DEFAULT_PRIORITY)
   assert.notStrictEqual(watcher.priority, DEFAULT_PRIORITY, '默认 priority 不能共享可变对象')
