@@ -136,6 +136,10 @@ const ISSUE35_ARTIFACTS = process.env.DSH_ISSUE35_ARTIFACTS
 const ISSUE35_ARTIFACTS_SOURCE = process.env.DSH_ISSUE35_ARTIFACTS
   ? 'env:DSH_ISSUE35_ARTIFACTS'
   : 'default:tmp-artifacts/issue-35'
+// Issue #58：多段 activeHours 的真实 Chromium 交互截图单独落盘，不覆盖既有基线。
+const ISSUE58_ARTIFACTS = process.env.DSH_ISSUE58_ARTIFACTS
+  ? resolve(process.env.DSH_ISSUE58_ARTIFACTS)
+  : join(REPO, 'tmp-artifacts', 'issue-58')
 
 // 只解析路径的探针：给测试与「验的到底是哪一版」取证用，不启动浏览器。
 if (process.argv.includes('--print-paths')) {
@@ -153,6 +157,7 @@ if (process.argv.includes('--print-paths')) {
   process.exit(0)
 }
 const SESSION_ID = 'session-panel-chromium-fixture'
+const ISSUE58_REPO = 'fixture/active-hours'
 // 每次验收用独立任务空间：崩溃重跑时不能复用上一次残留页面/事件监听，否则会伪造失败。
 const SPACE_NAME = 'dsh-full-panel-chromium-deep-ui-' + String(Date.now())
 const results = []
@@ -163,13 +168,17 @@ const deskCaptures = []
 // 本轮强制 SKIP 截图；需要重试通道时只改此 harness 开关，不触碰生产代码。
 const CAPTURE_SCREENSHOTS = false
 const apiLog = []
+const isIssue58WatchMutation = (row) => {
+  if (row.method === 'GET' || row.path !== '/session-superagent/watch') return false
+  try { return JSON.parse(row.body || '{}').repo === ISSUE58_REPO } catch { return false }
+}
 const debugLines = []
 const debug = (line) => debugLines.push(line)
 const unverified = [
   '未进入需要真实会话与凭证的 DSH Web GUI；本脚本验证独立 loopback 页面中真实 client.js 的 slot 注册以及 desk/orbit Component 挂载。',
   '真实 StatusOrbit 签名无 props；sessionId 传给 desk，Orbit watcher 数据由同一 fixture /state API 提供，不虚构 ctx/slot 参数。',
   '门禁/模型场景（U1/U5）的 GET /gates、GET /gates/models、POST /gates/preview 与 POST /gates 全部打本脚本的 loopback fixture：不是真实 WebView、不是真实服务端、不是真实模型；只验面板在真实 React 18 下的行为，不验服务端持久化。',
-  '未执行真实保存、安装更新、删除、暂停、恢复或 watcher 轮询；除门禁 fixture 的 POST 外，另有两条显式防写探针（末尾 guardProbe 与 Issue #35 确认点击），都必须由 loopback 返回 403。',
+  '未执行真实 GitHub/Gitee 保存、安装更新、删除、暂停、恢复或 watcher 轮询；Issue #58 仅允许 fixture/active-hours 在 loopback 保存两段→一段，门禁 POST 亦只打 fixture；另有两条显式防写探针（guardProbe 与 Issue #35 确认点击）仍必须 403。',
   '未验物理读屏、触摸、IME、真实 GitHub/Gitee 响应与真实 watcher 状态变化。',
 ]
 
@@ -613,6 +622,30 @@ async function startServer(installed, clientSource, fixture) {
       if (method === 'GET' && url.pathname === '/session-superagent/trace') return json(response, 200, fixture.trace)
       if (method === 'GET' && url.pathname === '/session-superagent/diagnose') return json(response, 200, fixture.diagnose)
       if (method === 'GET' && url.pathname === '/session-superagent/client-note') return json(response, 200, { ok: true, fixture: true })
+      // Issue #58：只允许这一条虚构仓库在 loopback 里创建/编辑；其它 mutation 继续走 403。
+      if (url.pathname === '/session-superagent/watch' && method === 'POST') {
+        const next = JSON.parse(requestBody || '{}')
+        if (next.repo === ISSUE58_REPO && next.sessionId === SESSION_ID) {
+          const id = `${ISSUE58_REPO}#${SESSION_ID}`
+          let entry = fixture.state.watchers.find((item) => item.id === id)
+          if (!entry) {
+            entry = {
+              id, repo: ISSUE58_REPO, provider: 'github', sessionId: SESSION_ID,
+              title: 'Issue #58 多段时段 fixture', intervalSec: 60, enabled: true, observe: false,
+              isolated: false, activeHours: '', note: '', ackLabel: '主理鱼:已处理',
+              lastPoll: new Date().toISOString(), lastWake: null, lastError: null,
+              filters: { labels: [], ignoreLabels: [], onlyAssigned: false, assignee: null, allowAuthors: [] },
+              priority: { reopened: true, comments: true, labels: true, unassigned: false, stale: false },
+              history: [], filteredLog: [], filterCounts: {}, events: [],
+              quality: { itemsWoken: 0, itemsAcked: 0, actionRate: 0 },
+              repoAccess: { repo: ISSUE58_REPO, push: true, hasIssues: true }, daily: { days: 0, total: 0 },
+            }
+            fixture.state.watchers.push(entry)
+          }
+          if (typeof next.activeHours === 'string') entry.activeHours = next.activeHours
+          return json(response, 200, { ok: true, id, activeHours: entry.activeHours, warnings: [] })
+        }
+      }
       if (url.pathname.startsWith('/session-superagent/') && method !== 'GET') {
         return json(response, 403, { error: 'fixture-read-only：本验收禁止所有写操作' })
       }
@@ -709,9 +742,10 @@ try {
     && overview.tabs[0]?.selected === 'true' && overview.watchers === 2 && overview.stats >= 4,
   { title: overview.title, tabs: overview.tabs, watchers: overview.watchers, stats: overview.stats })
   const shot = async (name) => {
-    const persist = name.startsWith('orbit') || name.startsWith('trigger-')
-    const path = `${SCREENSHOTS}/deep-ui-${name}.png`
-    if (!CAPTURE_SCREENSHOTS) {
+    const issue58 = name.startsWith('trigger-active-hours')
+    const persist = name.startsWith('orbit') || name.startsWith('trigger-') || issue58
+    const path = issue58 ? `${ISSUE58_ARTIFACTS}/${name}.png` : `${SCREENSHOTS}/deep-ui-${name}.png`
+    if (!CAPTURE_SCREENSHOTS && !issue58) {
       const reason = 'Ego/CDP 截图通道已证实在 API 内部终止进程；本轮跳过，DOM/焦点验收继续'
       console.log(`SKIP 截图 ${name} ${JSON.stringify(reason)}`)
       observe(`${name} 截图跳过（通道不可用）`, { path, reason })
@@ -719,10 +753,18 @@ try {
     }
     try {
       if (persist) {
-        // 本任务只允许 deep-ui-*.png；既有 desk/panel-chromium PNG 不覆盖。
+        // 既有 desk/panel-chromium PNG 不覆盖；Issue #58 截图走独立 artifacts 目录。
+        if (issue58) {
+          mkdirSync(ISSUE58_ARTIFACTS, { recursive: true })
+          const windowInfo = await page.cdp('Browser.getWindowForTarget', {})
+          if (windowInfo.bounds?.windowState === 'minimized') {
+            await page.cdp('Browser.setWindowBounds', { windowId: windowInfo.windowId, bounds: { windowState: 'normal' } })
+          }
+          await page.cdp('Page.bringToFront')
+        }
         await page.screenshot({ path, fullPage: true })
         artifacts.push(path)
-        observe(`${name} 已截图`, { path: `docs/assets/deep-ui-${name}.png` })
+        observe(`${name} 已截图`, { path: issue58 ? path : `docs/assets/deep-ui-${name}.png` })
       } else {
         // 保留既有八张 desk 基线；已知 raw CDP 截图可能长阻塞，因此明确 SKIP，不拖住 DOM/焦点验收。
         const detail = { name, persisted: false, reason: '保留 desk 基线；新增候选仅 deep-ui-orbit* / deep-ui-trigger-*' }
@@ -737,7 +779,12 @@ try {
     }
   }
   const openTab = async (label) => {
-    await page.click(`loc=role:tab[name='${label}']`)
+    await page.evaluate((expected) => {
+      [...document.querySelectorAll('[role=tab]')].find((node) => node.textContent === expected)
+        ?.scrollIntoView({ block: 'center', inline: 'nearest' })
+    }, label)
+    await page.focus(`loc=role:tab[name='${label}']`)
+    await page.keyboard.press('Enter')
     await page.waitForFunction((expected) => document.querySelector('[role=tab][aria-selected=true]')?.textContent === expected, label, { timeout: 5000 })
   }
   const openSettings = async (label) => {
@@ -1130,6 +1177,77 @@ try {
   }))
   check('trigger 高级区 Space 真实收起且焦点不丢', advancedClosed.expanded === 'false'
     && !advancedClosed.bodyMounted && advancedClosed.activeIsTrigger && advancedClosed.activeConnected, advancedClosed)
+
+  // ── Issue #58：多段 activeHours 的真实添加/编辑/删除/保存（仅 loopback fixture）──
+  const issue58Scroll = async (selector) => page.evaluate((wanted) => {
+    document.querySelector(wanted)?.scrollIntoView({ block: 'center', inline: 'nearest' })
+  }, selector)
+  const issue58Click = async (selector) => {
+    await issue58Scroll(selector)
+    await page.click(selector)
+  }
+  const issue58TypeTime = async (selector, value) => {
+    await issue58Scroll(selector)
+    await page.focus(selector)
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.type(value)
+    await page.waitForFunction(({ selector: wanted, value: expected }) => (
+      document.querySelector(wanted)?.value === expected
+    ), { selector, value }, { timeout: 5000 })
+  }
+  await issue58Click("#watcher-new button[aria-label='添加时段']")
+  await page.waitForFunction(() => document.querySelectorAll("#watcher-new input[type='time']").length === 2, undefined, { timeout: 5000 })
+  await issue58TypeTime('#watcher-new-activeHours-end', '12:00')
+  await issue58Click("#watcher-new button[aria-label='添加时段']")
+  await page.waitForFunction(() => document.querySelectorAll("#watcher-new input[type='time']").length === 4
+    && document.getElementById('watcher-new-activeHours-end')?.value === '12:00', undefined, { timeout: 5000 })
+  await issue58TypeTime('#watcher-new-activeHours-2-start', '14:00')
+  await issue58TypeTime('#watcher-new-activeHours-2-end', '23:00')
+  // ego 的 page.fill(type=time) 只改 DOM、不触发 React onChange；时间一律走上面的真实键盘。
+  // 文本 repo 最后填写，同时让时间输入失焦并走原生 change。
+  await issue58Scroll('#watcher-new-repo')
+  await page.fill('#watcher-new-repo', ISSUE58_REPO)
+  const issue58Multi = await page.evaluate(() => ({
+    values: [...document.querySelectorAll("#watcher-new input[type='time']")].map((node) => node.value),
+    ids: [...document.querySelectorAll("#watcher-new input[type='time']")].map((node) => node.id),
+    labels: [...document.querySelectorAll("#watcher-new input[type='time']")].map((node) => node.getAttribute('aria-label')),
+  }))
+  check('Issue #58 Chromium 多段渲染四个原生 time input 且编辑生效', JSON.stringify(issue58Multi.values)
+    === JSON.stringify(['09:00', '12:00', '14:00', '23:00'])
+    && new Set(issue58Multi.ids).size === 4 && issue58Multi.labels.slice(2).every((label) => label?.includes('第 2 段')), issue58Multi)
+  await shot('trigger-active-hours-multi')
+  await issue58Click('#watcher-new .dt-savebar button[type=submit]')
+  await page.waitForFunction(() => document.getElementById('watcher-new-repo')?.value === ''
+    && !document.querySelector('#watcher-new .dt-savebar'), undefined, { timeout: 10000 })
+  const issue58CreateRequest = [...apiLog].reverse().find(isIssue58WatchMutation)
+  const issue58CreateBody = JSON.parse(issue58CreateRequest?.body || '{}')
+  const issue58Created = fixture.state.watchers.find((item) => item.repo === ISSUE58_REPO)
+  check('Issue #58 Chromium 多段保存到 loopback 并规范拼接', issue58CreateBody.activeHours === '09:00-12:00,14:00-23:00'
+    && issue58Created?.activeHours === '09:00-12:00,14:00-23:00', { request: issue58CreateBody, stored: issue58Created?.activeHours })
+
+  await openTab('总览')
+  await page.waitForFunction(() => [...document.querySelectorAll('.dt-list .dt-open')]
+    .some((node) => node.textContent === 'fixture/active-hours'), undefined, { timeout: 10000 })
+  await page.evaluate(() => {
+    [...document.querySelectorAll('.dt-list .dt-open')].find((node) => node.textContent === 'fixture/active-hours')
+      ?.scrollIntoView({ block: 'center', inline: 'nearest' })
+  })
+  await page.click('.dt-list .dt-open >> nth=2')
+  await page.waitForSelector("form[data-mode='edit']", { state: 'visible', timeout: 5000 })
+  const issue58Persisted = await page.evaluate(() => [...document.querySelectorAll("form[data-mode='edit'] input[type='time']")].map((node) => node.value))
+  check('Issue #58 Chromium 保存后重开仍渲染两段', JSON.stringify(issue58Persisted)
+    === JSON.stringify(['09:00', '12:00', '14:00', '23:00']), issue58Persisted)
+  await issue58Click("form[data-mode='edit'] button[aria-label='删除第 2 段']")
+  await page.waitForFunction(() => document.querySelectorAll("form[data-mode='edit'] input[type='time']").length === 2, undefined, { timeout: 5000 })
+  await shot('trigger-active-hours-single')
+  await issue58Click("form[data-mode='edit'] .dt-savebar button[type=submit]")
+  await page.waitForFunction(() => !document.querySelector("form[data-mode='edit']"), undefined, { timeout: 10000 })
+  const issue58EditRequest = [...apiLog].reverse().find(isIssue58WatchMutation)
+  const issue58EditBody = JSON.parse(issue58EditRequest?.body || '{}')
+  check('Issue #58 Chromium 删除第二段后再次保存成功', issue58EditBody.activeHours === '09:00-12:00'
+    && issue58Created?.activeHours === '09:00-12:00', { request: issue58EditBody, stored: issue58Created?.activeHours })
+  // 恢复既有两条 watcher，后续 Orbit / mutation 基线不受本场景影响。
+  fixture.state.watchers = fixture.state.watchers.filter((item) => item.repo !== ISSUE58_REPO)
 
   // 设置总壳与五个分区全部真实点击。
   await openTab('设置')
@@ -1782,9 +1900,9 @@ try {
     network: window.__networkViolations,
   }))
   check('完整走查无未预期页面错误或外部请求', errors.capture.length === 0 && errors.network.length === 0, errors)
-  // 门禁专项会 POST /gates 与 /gates/preview —— 那是本 harness 自己的 loopback fixture 记录，
-  // 不是真实写操作；这里只把「门禁之外的 mutation」计为违规。
-  const mutations = apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates'))
+  // 门禁与 Issue #58 的 POST 都是本 harness 自己的 loopback fixture 记录，不是真实写操作；
+  // 这里只把「这两条明确白名单之外的 mutation」计为违规。
+  const mutations = apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates') && !isIssue58WatchMutation(row))
   const traceCalls = apiLog.filter((row) => row.path.startsWith('/session-superagent/trace'))
   const updateCalls = apiLog.filter((row) => row.path.startsWith('/session-superagent/update'))
   check('fake state/update/trace 均实际命中 loopback', apiLog.some((row) => row.path === '/session-superagent/state')
@@ -1800,7 +1918,7 @@ try {
   })
   check('fixture mutation 防写 guard 真实返回 403', guardProbe.status === 403
     && String(guardProbe.body).includes('fixture-read-only')
-    && apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates')).length === 1
+    && apiLog.filter((row) => row.method !== 'GET' && !row.path.startsWith('/session-superagent/gates') && !isIssue58WatchMutation(row)).length === 1
     && apiLog.at(-1)?.body.includes('fixture-read-only-guard-probe'),
   { status: guardProbe.status, body: guardProbe.body, request: apiLog.at(-1) })
   // ── 第四阶段 · Issue #35：确认层在真实 composer dock 里的几何与真实点击 ─────────────
