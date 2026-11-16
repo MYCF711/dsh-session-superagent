@@ -78,6 +78,13 @@ dsh plugin --profile desktop add dsh-session-superagent@0.10.2
 watch_start({ repo: "owner/name", goal: "处理这个仓库的 issue" })
 ```
 
+`activeHours` 支持逗号或分号分隔的多段 `HH:MM-HH:MM`，任一段命中就会唤醒，每段都可以跨夜；留空仍是全天：
+
+```text
+watch_start({ repo: "owner/name", activeHours: "09:00-12:00,14:00-23:00" })
+watch_pr_start({ repo: "owner/name", activeHours: "22:00-02:00;09:00-10:00" })
+```
+
 之后它会轮询；有动静时你会收到一条 `【主理鱼】owner/name 有 N 条新动态`。处理完：
 
 ```text
@@ -149,7 +156,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-1119 项单测、43 项 preflight（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、11 项 UI 全绿（0.11.0）。
+1126 项单测、43 项 preflight（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、11 项 UI 全绿（0.11.0）。
 
 ### 贡献归属门禁
 

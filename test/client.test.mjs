@@ -1266,6 +1266,92 @@ test('活跃时段用两个原生时间选择器（起 / 止），不再让人�
   assert.ok(night.length > 0)
 })
 
+test('issue #58：HoursField 多段渲染 4 个 time input，编辑/添加/删除都规范拼接', () => {
+  const { registrations, render, stateCalls, resetStateCalls } = loadClient()
+  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const snap = {
+    loading: false, error: null,
+    body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [] },
+  }
+  const queue = deskQueue(snap, null, {}, 'trigger')
+  queue[3] = { ...deskForm, activeHours: '09:00-12:00,14:00-23:00' }
+  const nodes = walk(render(desk, queue, { sessionId: 's1' }))
+  const times = nodes.filter((n) => n.type === 'input' && n.props.type === 'time')
+  assert.equal(times.length, 4, '两段必须是两行、四个原生时间输入')
+  assert.deepEqual(times.map((n) => n.props.value), ['09:00', '12:00', '14:00', '23:00'])
+  assert.equal(times[0].props.id, 'watcher-new-activeHours', '首行起始 id 保持旧契约')
+  assert.equal(times[1].props.id, 'watcher-new-activeHours-end', '首行结束 id 保持旧契约')
+  assert.equal(new Set(times.map((n) => n.props.id)).size, 4, '额外行 id 必须唯一')
+  assert.ok(times.slice(2).every((n) => String(n.props['aria-label']).includes('第 2 段')), '额外行 aria-label 要指明段号')
+
+  resetStateCalls()
+  times[2].props.onChange({ target: { value: '15:00' } })
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '09:00-12:00,15:00-23:00')
+
+  const remove = nodes.find((n) => n.type === 'button' && n.props['aria-label'] === '删除第 2 段')
+  assert.ok(remove, '第二段要有可访问的删除按钮')
+  remove.props.onClick()
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '09:00-12:00', '删除后要拼接剩余段，不留尾逗号')
+
+  const blankQueue = deskQueue(snap, null, {}, 'trigger')
+  const blankNodes = walk(render(desk, blankQueue, { sessionId: 's1' }))
+  const add = blankNodes.find((n) => n.type === 'button' && n.props['aria-label'] === '添加时段')
+  assert.ok(add, '空白全天态也要有添加入口，不能只显示空控件')
+  add.props.onClick()
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '09:00-10:00')
+})
+
+test('HoursField 单段起止/全天/跨夜原行为不变', () => {
+  const { registrations, render, stateCalls, resetStateCalls } = loadClient()
+  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const snap = { loading: false, error: null, body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [] } }
+  const queue = deskQueue(snap, null, {}, 'trigger')
+  queue[3] = { ...deskForm, activeHours: '22:00-06:00' }
+  const nodes = walk(render(desk, queue, { sessionId: 's1' }))
+  const times = nodes.filter((n) => n.type === 'input' && n.props.type === 'time')
+  assert.equal(times.length, 2)
+  assert.ok(nodes.some((n) => n.type === '#text' && n.text === '跨夜窗口'))
+  times[0].props.onChange({ target: { value: '21:30' } })
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '21:30-06:00')
+  times[1].props.onChange({ target: { value: '05:30' } })
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '22:00-05:30')
+  const allDay = nodes.find((n) => n.type === 'button' && (n.props.children || []).join('') === '全天')
+  assert.ok(allDay)
+  allDay.props.onClick()
+  assert.equal(stateCalls().filter((call) => call.index === 3).at(-1).next.activeHours, '')
+
+  resetStateCalls()
+  const blank = walk(render(desk, deskQueue(snap, null, {}, 'trigger'), { sessionId: 's1' }))
+  assert.ok(blank.some((n) => n.type === '#text' && n.text === '留空 = 全天'))
+  assert.deepEqual(blank.filter((n) => n.type === 'input' && n.props.type === 'time').map((n) => n.props.value), ['', ''])
+})
+
+test('inWindowNow 多段 some：全在窗外才是时段外，任一非法段整串返回 null', () => {
+  const { registrations, render } = loadClient()
+  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const pad = (n) => String(n).padStart(2, '0')
+  const hour = new Date().getHours()
+  const windowAt = (offset) => {
+    const start = (hour + offset) % 24
+    return pad(start) + ':00-' + pad((start + 1) % 24) + ':00'
+  }
+  const insideStart = (hour + 23) % 24
+  const inside = pad(insideStart) + ':00-' + pad((insideStart + 3) % 24) + ':00'
+  const statesFor = (activeHours) => {
+    const snap = {
+      loading: false, error: null,
+      body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [watcher('a/b', { id: 'a/b#s1', activeHours })] },
+    }
+    return walk(render(desk, deskQueue(snap)))
+      .filter((n) => n.props && n.props.className === 'dt-stage')
+      .map((n) => (n.props.children || []).join(''))
+  }
+  assert.deepEqual(statesFor(windowAt(6) + ',' + windowAt(9)), ['时段外'])
+  assert.deepEqual(statesFor(windowAt(6) + ',' + inside), ['主理中'], '第二段命中就必须 active')
+  assert.deepEqual(statesFor(windowAt(6) + ',bad'), ['主理中'], '非法多段返回 null，不乱标时段外')
+  assert.deepEqual(statesFor('23:60-24:00'), ['主理中'], '非法分钟也返回 null')
+})
+
 test('弹层键盘可达：带 tabIndex=-1 且 role=dialog（打开后可聚焦进去）', () => {
   const { registrations, render } = loadClient()
   const orbit = registrations.find((r) => r.opts.id === 'session-superagent-orbit')

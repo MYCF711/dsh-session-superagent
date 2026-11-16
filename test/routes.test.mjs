@@ -1866,6 +1866,56 @@ test('面板填错 activeHours 要被拒（T40：HTTP 路径以前原样收下 =
   assert.equal(Object.values(after.watchers)[0].activeHours, '09:00-23:00', '合法值要真的存下来')
 })
 
+test('issue #58：HTTP、watch_start、watch_pr_start 真实接受多段 activeHours 并规范化', async () => {
+  const localTools = []
+  const localRoutes = new Map()
+  const dir = tempDir('zhuli-hours-multi-')
+  process.env.DSH_SUPERAGENT_STATE = dir
+  process.env.DSH_SUPERAGENT_NO_POLL = '1'
+  const localCtx = {
+    tools: { register: (tool) => localTools.push(tool) },
+    webServer: { register: (route) => { localRoutes.set(route.path, route); return () => {} } },
+    agents: { get: () => null, currentInitiator: () => ({ id: 'session-multi' }) },
+    get: () => null, on() {}, effect: (fn) => fn(), inject: () => {},
+  }
+  const mod = await import('../lib/index.js?hours-multi=' + Date.now())
+  mod.apply(localCtx)
+
+  const issueResult = String(await localTools.find((tool) => tool.name === 'watch_start').execute({
+    repo: 'a/multi-issue', activeHours: '09:00-12:00; 14:00 - 23:00',
+  }))
+  assert.match(issueResult, /activeHours=09:00-12:00,14:00 - 23:00/)
+  const prResult = String(await localTools.find((tool) => tool.name === 'watch_pr_start').execute({
+    repo: 'a/multi-pr', activeHours: '22:00 - 02:00;09:00-10:00',
+  }))
+  assert.match(prResult, /activeHours=22:00 - 02:00,09:00-10:00/)
+
+  const http = makeRes()
+  await localRoutes.get('/session-superagent/watch').handler(makeReq(
+    'POST', '/session-superagent/watch',
+    JSON.stringify({ repo: 'a/multi-http', sessionId: 'session-multi', activeHours: '09:00-12:00; 14:00 - 23:00' }),
+  ), http)
+  assert.ok(http.statusCode === undefined || http.statusCode < 400, http.chunks.join(''))
+
+  const stored = JSON.parse(readFileSync(join(dir, 'watchers.json'), 'utf8')).watchers
+  assert.equal(stored['a/multi-issue#session-multi'].activeHours, '09:00-12:00,14:00 - 23:00')
+  assert.equal(stored['pr:a/multi-pr#session-multi'].activeHours, '22:00 - 02:00,09:00-10:00')
+  assert.equal(stored['a/multi-http#session-multi'].activeHours, '09:00-12:00,14:00 - 23:00')
+
+  const before = JSON.stringify(stored)
+  const rejected = String(await localTools.find((tool) => tool.name === 'watch_start').execute({
+    repo: 'a/multi-bad', activeHours: '09:00-12:00,',
+  }))
+  assert.match(rejected, /error: activeHours/)
+  const badHttp = makeRes()
+  await localRoutes.get('/session-superagent/watch').handler(makeReq(
+    'POST', '/session-superagent/watch',
+    JSON.stringify({ repo: 'a/multi-bad-http', sessionId: 'session-multi', activeHours: '09:00-12:00,,14:00-23:00' }),
+  ), badHttp)
+  assert.equal(badHttp.statusCode, 400)
+  assert.equal(JSON.stringify(JSON.parse(readFileSync(join(dir, 'watchers.json'), 'utf8')).watchers), before, '非法整串不能留下半条 watcher')
+})
+
 test('watch_start 恢复暂停的守要在回执里说明（T40 W12：不许静默恢复）', async () => {
   const tools = []
   const dir = tempDir('zhuli-resume-')

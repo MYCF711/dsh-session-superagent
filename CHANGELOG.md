@@ -6,6 +6,10 @@
 
 ### Added
 
+- **`activeHours` 支持多段活跃窗口**（@hZsFN #58）：`watch_start` / `watch_pr_start` / HTTP 与面板共用逐段校验，
+  逗号或分号均可，任一段命中即活跃；不在任何段时取各段最小正向等待。面板每段保留两个原生时间输入，
+  可添加、编辑、删除并规范拼接；空段、尾分隔符和任一非法段整串拒绝，旧非法值的运行时 fail-open 不变。
+
 - **监控「我们提给别人的 PR」的响应**（新工具 `watch_pr_start` / `watch_pr_status` / `watch_pr_stop`，GitHub 与 Gitee 同时支持）：
   以前只有「守仓库」——等别人来 issue 里发话；我们 fork 别人的仓库、提了 PR 之后，对方的评论没人接。
   现在可以单独开一条 **PR 守**：只盯 `author=自己` 的、未合并的 PR，有新评论就唤醒会话。
