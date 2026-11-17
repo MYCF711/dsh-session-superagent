@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  ApiError,
   checkAttribution,
   checkPrAttribution,
   coAuthorLogins,
@@ -474,4 +475,43 @@ test('纯函数解析 #N、代码围栏、skip 与 noreply co-author', () => {
   assert.ok(coAuthorLogins(
     'Co-authored-by: Octo Cat <123+octocat@users.noreply.github.com>',
   ).has('octocat'))
+})
+
+test('提交信息提到本仓库不存在的 #N：跳过而不是让门禁 ERROR', async () => {
+  // 真实场景：commit body 里的现场记录写了「#95 / #96 / #97 被重复唤醒」，
+  // 而那些编号属于别的仓库 —— 本仓库查 issue 会 404。
+  const api = fakeApi({
+    [`${ROOT}/pulls/51`]: pull(51, 'maintainer'),
+    [`${ROOT}/pulls/51/commits`]: [commit('fix-95-sha', 'maintainer', 'fix: 现场记录 #95 / #96 / #97 被重复唤醒')],
+    [`${ROOT}/pulls/41`]: pull(41, 'external-author'),
+    [`${ROOT}/pulls/41/commits`]: [],
+    [`${ROOT}/issues/95`]: new ApiError('HTTP 404 /repos/x/issues/95', { status: 404 }),
+    [`${ROOT}/issues/96`]: new ApiError('HTTP 404 /repos/x/issues/96', { status: 404 }),
+    [`${ROOT}/issues/97`]: new ApiError('HTTP 404 /repos/x/issues/97', { status: 404 }),
+  })
+
+  const result = await checkAttribution({ repo: REPO, pr: 51, against: 41, api })
+
+  assert.equal(result.status, 'PASS', '不存在的 issue 不该产出 FAIL')
+  assert.deepEqual(result.failures, [])
+  assert.deepEqual(
+    result.skipped.filter((item) => item.type === 'missing-issue').map((item) => item.ref).sort((a, b) => a - b),
+    [95, 96, 97],
+    '三个引用都要记成 missing-issue，而不是只跳过第一个',
+  )
+})
+
+test('issue 查询遇到非 404 的故障仍然上抛（不能把限流/5xx 当成「不存在」）', async () => {
+  const api = fakeApi({
+    [`${ROOT}/pulls/52`]: pull(52, 'maintainer'),
+    [`${ROOT}/pulls/52/commits`]: [commit('fix-500-sha', 'maintainer', 'fix: 参考 #500 的改法')],
+    [`${ROOT}/pulls/41`]: pull(41, 'external-author'),
+    [`${ROOT}/pulls/41/commits`]: [],
+    [`${ROOT}/issues/500`]: new ApiError('HTTP 503 /repos/x/issues/500', { status: 503 }),
+  })
+
+  await assert.rejects(
+    () => checkAttribution({ repo: REPO, pr: 52, against: 41, api }),
+    (error) => error.status === 503,
+  )
 })

@@ -2,6 +2,27 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Fixed
+
+- **自激唤醒：处理完一条 issue 会把自己再叫醒一次**（2026-11-16 真机，同一晚 `#95` / `#96` / `#97` 被重复唤醒 3 次，其中 2 次什么都不用做）。
+  `pendingRetry` 判断「提过但没回执」时**只看重试次数，完全不看水位**：
+
+  1. 15:09:09 唤醒 `#97`，`recordPendingWake` 写下 `pending['97']`；
+  2. 15:13:36 `watch_ack` 处理完，`seen['97']` 被推到当下（**这条已经有回执了**）；
+  3. 15:14:12 下一轮 `pendingRetry` 仍然只看 `tries < maxTries`，把 `#97` 当「没回执」重提了一次。
+
+  ⇒ **一次「处理」动作本身会再叫醒自己一次**：我回评/打标签让 `updated_at` 前进，而 ack 之后的重提都发生在
+  冷却窗口之外（`REPORT_COOLDOWN_MS` 只有 180 秒，处理一条 issue 常要十几分钟）。
+
+  判据改成「**水位有没有盖住这条更新**」：`seen[key] >= item.updated_at` 就说明 ack 已经推进过水位，
+  这条的重提早在别处被消费掉了 —— 直接丢掉，不再算「没回执」。
+  只看 `seen[key]`、**不退化到全局 `cursor`**：那是「这一页里最新的更新」，拿它当基线会一次性丢掉所有更旧的
+  pending（`partitionItems` 里记过的同一个 floor 陷阱）。
+
+  5 条回归（含接线层），6 条变异全红。全量 **1124/1124**。
+
 ## [0.11.0] - 2026-11-13 —— PR 响应监控（守我们提给别人的 PR）
 
 ### Added

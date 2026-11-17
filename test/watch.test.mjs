@@ -1888,6 +1888,108 @@ test('提过但没回执的条目，下一轮再提一次（Ticket「open」的�
   assert.equal(pendingRetry(clearPending(pending, [7, 8]), items, { now: Date.parse('2026-11-05T00:20:00Z') }).retry.length, 0)
 })
 
+test('★★★ ack 清空 pending 后，旧轮询快照不许把它复活（自激唤醒，2026-11-16 真机 #97）', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  // 真机时间线：15:13:36 watch_ack 清空 pending 并写下 lastAcked / acked；
+  // 并发 tick 手里还是 ack **之前**的快照（15:09:09 那次 recordPendingWake）。
+  const stored = {
+    pending: {},
+    lastAcked: { numbers: [97], at: '2026-11-16T15:13:36.271Z' },
+    acked: { 97: { at: '2026-11-16T15:13:36.271Z' } },
+  }
+  const polled = {
+    pending: { 97: { tries: 1, at: '2026-11-16T15:09:09.558Z' } },
+    lastAcked: null,
+    acked: null,
+  }
+
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, {},
+    'ack 之后（at <= ackAt）的旧 pending 必须被丢掉，否则下一轮又重提一次')
+  assert.deepEqual(merged.acked, { 97: { at: '2026-11-16T15:13:36.271Z' } },
+    'acked 只增不删 —— 旧快照的 null 不能把它抹掉')
+  assert.deepEqual(merged.lastAcked, stored.lastAcked,
+    'lastAcked 只许前进')
+})
+
+test('★★★ ack #7 时，未 ack 的 #8 即使时间更早也必须保留（2026-11-17 外部 review 第二轮）', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  // 上一版拿全局 lastAcked.at（所有 ack 里最晚的 00:20）当阈值，#8 的 00:10 被
+  // 判成「早于 ack」直接删掉 —— 可 #8 根本没 ack，下一轮该重提的重提不了。
+  const stored = {
+    pending: { 8: { tries: 1, at: '2026-11-05T00:10:00.000Z' } },
+    lastAcked: { numbers: [7], at: '2026-11-05T00:20:00.000Z' },
+    acked: { 7: { at: '2026-11-05T00:20:00.000Z' } },
+  }
+  const polled = {
+    pending: {
+      7: { tries: 1, at: '2026-11-05T00:00:00.000Z' },
+      8: { tries: 1, at: '2026-11-05T00:10:00.000Z' },
+    },
+    lastAcked: null,
+    acked: null,
+  }
+
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, { 8: { tries: 1, at: '2026-11-05T00:10:00.000Z' } },
+    '#7 被 ack（00:00 <= 00:20）要删；#8 没 ack，00:10 不是它的 ack 时间，必须留')
+})
+
+test('★★★ 老状态文件只有 lastAcked.numbers 没有 acked 明细时，按 lastAcked.at 兜底', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  const stored = {
+    pending: { 7: { tries: 1, at: '2026-11-05T00:00:00.000Z' } },
+    lastAcked: { numbers: [7], at: '2026-11-05T00:20:00.000Z' },
+    // acked 缺失（升级前的状态文件）
+  }
+  const polled = { pending: {}, lastAcked: null, acked: null }
+
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, {}, '#7 在 lastAcked.numbers 里，00:00 <= 00:20 该删')
+})
+
+test('正常「已唤醒但还没 ack」的 pending 仍然重提（seen 不是 ack 凭证）', async () => {
+  const { recordPendingWake, pendingRetry } = await import('../lib/watch.js')
+  // reviewer 给的真实输入：成功唤醒后 seen[number] 本来就会推到 item.updated_at，
+  // 并不要求 ack —— 所以 updated_at <= seen 是常态，不能当「已消费」。
+  const pending = recordPendingWake({}, [7, 8], '2026-11-05T00:00:00Z')
+  const items = [
+    { number: 7, state: 'open', updated_at: '2026-11-05T00:00:00Z' },
+    { number: 8, state: 'open', updated_at: '2026-11-05T00:20:00Z' },
+  ]
+
+  const { retry, stillPending } = pendingRetry(pending, items, {
+    now: Date.parse('2026-11-05T00:20:00Z'),
+  })
+
+  assert.equal(retry.length, 2, '#7 只是已唤醒、还没 ack，冷却过了就该继续重提')
+  assert.equal(retry[0].number, 7)
+  assert.equal(retry[0].retryOf.tries, 1)
+  assert.equal(stillPending[7] !== undefined, true, '重提过的还留在 pending 里')
+})
+
+test('ack 之后新产生的 pending 必须保留（别被 ack 一起吞掉）', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  const stored = {
+    pending: {},
+    lastAcked: { numbers: [7], at: '2026-11-05T00:20:00Z' },
+    acked: { 7: { at: '2026-11-05T00:20:00Z' } },
+  }
+  const polled = {
+    pending: { 8: { tries: 1, at: '2026-11-05T00:30:00Z' } },
+    lastAcked: null,
+    acked: null,
+  }
+
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, { 8: { tries: 1, at: '2026-11-05T00:30:00Z' } },
+    'ack 之后（at > ackAt）的 pending 是新回执，必须留下')
+})
+
 test('唤醒消息里要标出「上一轮提过，还没回执」', async () => {
   const { formatWatchText } = await import('../lib/watch.js')
   const item = { number: 7, title: 'x', state: 'open', user: { login: 'a' }, labels: [], assignees: [], html_url: 'https://x/7', retryOf: { tries: 1, first: '2026-11-05T00:00:00Z', at: '2026-11-05T00:00:00Z' } }
