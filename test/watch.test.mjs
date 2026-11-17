@@ -178,8 +178,15 @@ test('applyWatcherAction: pause / resume / delete 只动目标那一条', () => 
 
   state = makeState()
   state.watchers['a/b#s1'].enabled = false
+  // 暂停前正处在连续失败退避里：nextAt 是未来时间。恢复时若不清它，
+  // 定时器 tick 的第一句就会静默跳过 —— 用户看到的就是「恢复后怎么也不触发」。
+  state.watchers['a/b#s1'].nextAt = new Date(Date.now() + 25 * 60 * 1000).toISOString()
+  state.watchers['a/b#s1'].deferReason = 'backoff'
   assert.deepEqual(applyWatcherAction(state, { action: 'resume', id: 'a/b#s1' }), { ok: true, action: 'resume', id: 'a/b#s1', enabled: true })
   assert.equal(state.watchers['a/b#s1'].lastError, null, '恢复时清掉旧的错误，别让卫星一上来就是红的')
+  assert.equal(state.watchers['a/b#s1'].nextAt, null, '恢复时必须清退避窗口，否则 tick 会静默跳过（2026-11-17 用户报障）')
+  assert.equal(state.watchers['a/b#s1'].deferReason, null, '恢复时清掉旧的推迟原因')
+  assert.equal(state.watchers['c/d#s2'].nextAt, undefined, '不该动别的条目')
 
   state = makeState()
   assert.deepEqual(applyWatcherAction(state, { action: 'delete', id: 'a/b#s1' }), { ok: true, action: 'delete', id: 'a/b#s1', deleted: true })

@@ -668,8 +668,11 @@ test('/state 每条守都带 deferReason（面板按字段统计，不再匹配�
   const list = body.watchers || []
   assert.ok(list.length > 0, '应该有守')
   for (const w of list) assert.ok('deferReason' in w, '缺 deferReason：' + JSON.stringify(w).slice(0, 120))
-  // 新加的守还没被暂停过 —— 应当是 null 而不是 undefined
-  assert.equal(list[0].deferReason, null)
+  // 新建的守都应有一个明确的 deferReason（null 也可以）——但**不能 undefined**。
+  // 本文件是共享进程的，前面用例可能留下别的守（比如 active-hours），所以按 id 取这一条。
+  const mine = list.find((w) => w.repo === 'o/reason')
+  assert.ok(mine, '应该能按 repo 找到刚建的那条：' + JSON.stringify(list.map((w) => w.repo)))
+  assert.equal(mine.deferReason, null)
 })
 
 test('watch_start 能设面板里的三项（会话上限 / 隔离保留天数 / 最多几个隔离区）', async () => {
