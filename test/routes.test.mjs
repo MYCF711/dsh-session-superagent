@@ -20,7 +20,7 @@ test.afterEach?.(() => {
 })
 process.env.DSH_SUPERAGENT_NO_POLL = '1'
 
-const { apply } = await import('../lib/index.js')
+const { apply, __test } = await import('../lib/index.js')
 
 const tools = []
 const routes = new Map()
@@ -668,8 +668,11 @@ test('/state 每条守都带 deferReason（面板按字段统计，不再匹配�
   const list = body.watchers || []
   assert.ok(list.length > 0, '应该有守')
   for (const w of list) assert.ok('deferReason' in w, '缺 deferReason：' + JSON.stringify(w).slice(0, 120))
-  // 新加的守还没被暂停过 —— 应当是 null 而不是 undefined
-  assert.equal(list[0].deferReason, null)
+  // 新建的守都应有一个明确的 deferReason（null 也可以）——但**不能 undefined**。
+  // 本文件是共享进程的，前面用例可能留下别的守（比如 active-hours），所以按 id 取这一条。
+  const mine = list.find((w) => w.repo === 'o/reason')
+  assert.ok(mine, '应该能按 repo 找到刚建的那条：' + JSON.stringify(list.map((w) => w.repo)))
+  assert.equal(mine.deferReason, null)
 })
 
 test('watch_start 能设面板里的三项（会话上限 / 隔离保留天数 / 最多几个隔离区）', async () => {
@@ -1958,4 +1961,144 @@ test('HTTP 与工具的 intervalSec 都先取整再夹取（T40 W7：30.7 不能
   const entry = state.watchers['acme/round#session-test']
   assert.equal(entry.intervalSec, 31, 'HTTP 必须与 watch_start 一样取整')
   await call('POST', '/session-superagent/watch', { action: 'delete', id: 'acme/round#session-test' })
+})
+
+// ── PR #65 review：人工触发（「立即」/ 恢复）必须真的跑起来 ────────────────
+// 这三条都是行为级：以前只测了纯函数 `applyWatcherAction`（清 nextAt），
+// 而 review 指出的正是「路由分支到底有没有真的发请求」没人守。
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const readWatchers = () => {
+  const raw = JSON.parse(readFileSync(join(STATE_DIR, 'watchers.json'), 'utf8'))
+  return raw.state || raw
+}
+
+test('POST /watch poll：退避窗口内点「立即」真的会跑一轮（PR 守，review High）', async () => {
+  const calls = []
+  // 断言「进入轮询那一刻退避已经清干净」，而不是去读回写盘后的文件 ——
+  // 写回是 `.finally` 里的异步动作，和断言抢时间会 flaky（实测 4 轮里 2 轮红）。
+  const seenAtPoll = []
+  const restore = __test.setManualPoller(async (ctx, entry, everyMs) => {
+    calls.push({ id: entry.id, everyMs })
+    seenAtPoll.push({ nextAt: entry.nextAt, deferReason: entry.deferReason, consecutiveFailures: Number(entry.consecutiveFailures) || 0 })
+  })
+  try {
+    const created = await call('POST', '/session-superagent/watch', { repo: 'o/instant', sessionId: 's1', intervalSec: 60, watchKind: 'pr' })
+    const id = created.json().id
+    assert.equal(id, 'pr:o/instant#s1')
+
+    // 盘上塞一个 25 分钟后的退避窗口 + 3 次连续失败（review 的复现条件）
+    const file = join(STATE_DIR, 'watchers.json')
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    const st = raw.state || raw
+    st.watchers[id].nextAt = new Date(Date.now() + 25 * 60 * 1000).toISOString()
+    st.watchers[id].deferReason = 'network'
+    st.watchers[id].consecutiveFailures = 3
+    writeFileSync(file, JSON.stringify(raw, null, 2))
+
+    const res = await call('POST', '/session-superagent/watch', { action: 'poll', id })
+    assert.equal(res.statusCode, 202, res.body)
+    await sleep(60)
+
+    // 关键断言：`pollPrOnce` 第 2 步就是 `if (entry.nextAt && …) return`，
+    // 路由却照回 202 —— 用户看到「点了没反应」。所以「立即」必须先清退避。
+    assert.equal(calls.length, 1, '退避窗口内点「立即」必须真的跑一轮，不能静默空转：' + JSON.stringify(calls))
+    assert.equal(calls[0].id, id)
+    // 这是 High 的正题：`pollPrOnce` 第 2 步 `if (entry.nextAt && …) return` 会静默空转，
+    // 所以进轮询前 nextAt 必须已是 null（不清就 0 次 gh 调用，而路由照样回 202）。
+    assert.deepEqual(
+      seenAtPoll,
+      [{ nextAt: null, deferReason: null, consecutiveFailures: 0 }],
+      '进入轮询时退避必须已清干净：' + JSON.stringify(seenAtPoll),
+    )
+
+    await call('POST', '/session-superagent/watch', { action: 'delete', id })
+  } finally { restore() }
+})
+
+test('POST /watch resume：真的补跑一轮、且只跑一轮；暂停时不跑（review Medium）', async () => {
+  const calls = []
+  const restore = __test.setManualPoller(async (ctx, entry) => {
+    calls.push(entry.id)
+    // 模拟 poller 的产物，用来证明收尾确实 persistEntry 落盘了
+    entry.lastPoll = '2026-11-18T00:00:00.000Z'
+  })
+  // boot tick 只有 `startWatcher` 在**没开 `DSH_SUPERAGENT_NO_POLL`** 时才排，所以这里必须
+  // 关掉它；但同一个开关还短路着 create 里的 `precheckRepo()` —— 一关就会真跑两条
+  // `gh api`（实测裸 `node --test` 下这条用例 292ms → 2450ms，还会吃 search 配额）。
+  // 所以用 `DSH_SUPERAGENT_OFFLINE=1` 单独管住「别真打网络」，两个开关各司其职。
+  const previousNoPoll = process.env.DSH_SUPERAGENT_NO_POLL
+  const previousOffline = process.env.DSH_SUPERAGENT_OFFLINE
+  delete process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_OFFLINE = '1'
+  try {
+    const created = await call('POST', '/session-superagent/watch', { repo: 'o/revive', sessionId: 's1', intervalSec: 60, watchKind: 'pr' })
+    const id = created.json().id
+
+    // 先确认这条用例的场景真的成立：新建后 `startWatcher` 排了一个未触发的 boot tick。
+    // 若这里是 false，下面「resume 之后必须没有」就变成了恒真、守不住任何东西
+    //（jitter 若变成 0 会走 `else { tick() }` 而不排 boot tick，同样在这里 fail-loud）。
+    assert.equal(__test.bootTimerPending(id), true, '新建守应先排一个 boot tick，否则这条用例是空转')
+
+    await call('POST', '/session-superagent/watch', { action: 'pause', id })
+    await sleep(30)
+    assert.deepEqual(calls, [], '暂停态不该轮询')
+
+    const resumed = await call('POST', '/session-superagent/watch', { action: 'resume', id })
+    assert.equal(resumed.statusCode, 200)
+    await sleep(150)
+    // 「只跑一轮」：resume 分支自己补一次，`startWatcher` 排的 boot tick 必须被撤掉，
+    // 否则 5 秒内会连跑两次（多一次 API 调用，onlyNewComments 下更明显）。
+    assert.deepEqual(calls, [id], '恢复必须补跑且只跑一轮：' + JSON.stringify(calls))
+    // 上面那条 `sleep(150)` 短于 `jitterMs('pr:o/revive#s1', 5000)`≈3338ms，
+    // 所以只数调用数挡不住「没撤 boot tick」这个回归 —— 必须直接看它还在不在。
+    // `c71d94c` 的 review 就是这么把它变绿的：删掉撤销三行，调用数断言照过。
+    // 边界说明：这条缝证明的是「撤销那三行还在」，而不是「clearTimeout 真生效」——
+    // 只删 `clearTimeout` 留 `delete` 它不会红（3338ms 内 tick 本来也不会 fire）。
+    assert.equal(__test.bootTimerPending(id), false, 'resume 补跑之后必须撤掉 boot tick，否则 5 秒内会再跑一轮')
+    // 反向的「否定式断言陷阱」：上面两条都只说「没有 boot tick / 没有多跑一轮」，
+    // 把 resume 分支的 `startWatcher(...)` 整行删掉它们照样全绿 —— 而那正是用户报的
+    // 「恢复后不触发」（对抗性审计 m3 变体：恢复后 30 秒内一次轮询都没有）。
+    // 所以必须再要一条**肯定式**断言：恢复后 interval 定时器得在。
+    assert.equal(__test.watchTimerPending(id), true, '恢复后 interval 定时器必须还在，否则「恢复」等于停机')
+
+    assert.equal(readWatchers().watchers[id].lastPoll, '2026-11-18T00:00:00.000Z', '收尾必须 persistEntry 落盘')
+
+    await call('POST', '/session-superagent/watch', { action: 'delete', id })
+    assert.equal(__test.bootTimerPending(id), false, '删除后也不该留着 boot tick')
+    assert.equal(__test.watchTimerPending(id), false, '删除后 interval 必须停掉')
+  } finally {
+    restore()
+    // 断言中途抛错时也别把守留在共享 STATE_DIR 里（delete 路由本身幂等）
+    await call('POST', '/session-superagent/watch', { action: 'delete', id: 'pr:o/revive#s1' }).catch(() => {})
+    if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
+    else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
+    if (previousOffline === undefined) delete process.env.DSH_SUPERAGENT_OFFLINE
+    else process.env.DSH_SUPERAGENT_OFFLINE = previousOffline
+  }
+})
+
+test('POST /watch resume：离线开关生效，人工补跑也要挡住（review Low 1）', async () => {
+  // 本文件全局 `DSH_SUPERAGENT_NO_POLL=1`（`startWatcher` 只登记不轮询，路由单测靠它避免真请求）。
+  // 新加的「恢复后补跑」是绕过 startWatcher 的独立调用 —— 必须自己也尊重这个开关，
+  // 否则测试会在无凭证环境里真的打 GitHub。
+  // 判别依据：没装替身时若真的跑了一轮，离线 gh 返回的假内容是合法 GraphQL 以外的东西，
+  // 必然解析失败并累加 consecutiveFailures；开关生效时它必须还是 0。
+  // 本文件的 afterEach 会用模块加载时的 env 快照还原 process.env，
+  // 而快照是在 `NO_POLL='1'` 之前拍的 —— 跑到这里时开关可能已经被还原掉了，
+  // 所以必须在本用例内显式设一次（afterEach 会负责收拾）。
+  const previousNoPoll = process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_NO_POLL = '1'
+  const created = await call('POST', '/session-superagent/watch', { repo: 'o/offline-revive', sessionId: 's1', intervalSec: 60, watchKind: 'pr' })
+  const id = created.json().id
+  await call('POST', '/session-superagent/watch', { action: 'pause', id })
+  await call('POST', '/session-superagent/watch', { action: 'resume', id })
+  await sleep(250)
+
+  const entry = readWatchers().watchers[id]
+  assert.equal(Number(entry.consecutiveFailures) || 0, 0, '离线开关没生效：人工补跑不该真的发起轮询')
+  assert.equal(entry.lastError, null, '离线开关没生效：不该有失败记录')
+  if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
+  else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
+  await call('POST', '/session-superagent/watch', { action: 'delete', id })
 })

@@ -6,6 +6,55 @@
 
 ### Fixed
 
+- **暂停恢复后不触发 / 点「立即」也不触发**（2026-11-17 真机）。三处独立成因，都只在「人为干预」附近才暴露：
+
+  1. **恢复不清退避窗口**：暂停前若正处在连续失败退避里，`nextAt` 是未来时间；`applyWatcherAction('resume')`
+     只清 `lastError`、不清 `nextAt`，于是恢复后定时器 `tick` 第一句
+     `if (entry.nextAt && Date.now() < Date.parse(entry.nextAt)) return` 静默跳过 ——
+     面板上看着「已恢复」，实际一轮都不跑。恢复现在同时清 `nextAt` / `deferReason`：
+     手工恢复就是明确要求「现在就跑」，退避语义不该跨过一次人工干预。
+  2. **恢复后没有立即轮询**：`startWatcher` 发现定时器已在（`timers.has`）就直接 `return`，
+     而「立即」按钮又被暂停态挡住 —— 用户恢复完看不到任何反应。恢复成功后现在会**补一次立刻轮询**。
+  3. **`gh` 超时被当成网络故障退避 30 分钟**：`run()` 超时返回 `code: 'timeout'`，
+     字符串 `'timeout'` 走 `classifyGhError` 落 `network` 分类 → 指数退避最长 30 分钟。
+     steam++ 一抖，每轮都是 `timeout executing gh`，而 GitHub 那边明明有东西。
+     新增 `isGhTimeout()`：超时不 `bumpFailure`，只记一句人话 + 30 秒后重试。
+
+  另外两处同源修正：
+
+  - **`intervalSec` 兜底 300 与新建默认 60 不一致**：`/state` 回显兜底是 300、新建/保存默认是 60，
+    面板一打开就显示 300、一保存就把 60 写成 300（真机上三条守全变成 `intervalSec=300`）。统一为 60。
+  - **「会话正忙」被画成橙色故障**：`decideWake` 的忙分支没带 `busy: true`，
+    `planWakeSettlement` 只能用 `/busy|running|idle/i` 匹配**中文** reason → 匹配不到 →
+    写 `error: 'wake: 会话正忙…'` → 面板显示「暂停唤醒：会话正忙，下一轮重试」。
+    实际一直在正常排队，只是被画成坏了。忙分支现在带 `busy: true`。
+
+  回归：`applyWatcherAction` 恢复清窗口断言 + `/state` 兜底 60。
+
+- **上一版没修干净的三处**（PR #65 review 实测指出，均已补回归）：
+
+  1. **PR 守在退避期里点「立即」仍然静默跳过**：清退避只做在 `applyWatcherAction('resume')` 里，
+     `action: 'poll'` 分支直接把 entry 交给 `pollPrOnce`，而它第 2 步就是
+     `if (entry.nextAt && Date.now() < Date.parse(entry.nextAt)) return` —— 路由回 `202 {polling:true}`、
+     gh 调用 0 次、前端转完圈就停。`nextAt` 还剩 25 分钟时实测 `{"ghCalls":0,"nextAtStill":true}`。
+     新增 `runManualPoll(entry)`：清退避 → 过离线开关 → `inFlight` 去重 → 按 kind 分流，三个入口共用。
+  2. **PR 守的 gh 超时没接 `isGhTimeout`**：上一版只改了 issue 守，PR 守仍是
+     `{"consecutiveFailures":1,"nextAt":"…","lastError":"pr poll: timeout executing gh"}`，
+     连续两三次就到 30 分钟上限。抽成 `absorbGhTimeout(entry, res)`，两处列表失败分支共用。
+  3. **恢复后清退避却留着 `consecutiveFailures`**：第一次失败立刻从高位算退避、又跳回 30 分钟。
+     `clearBackoff` 现在一并清零。
+
+  顺带：「恢复后立即轮询」现在会把 `startWatcher` 刚排的 boot tick 撤掉，避免 5 秒内连跑两轮；
+  行为级回归补 4 条（`/watch` 的 poll 必须真进轮询、resume 只跑一轮且落盘、`DSH_SUPERAGENT_NO_POLL`
+  对人工触发同样生效、PR 守超时只等 30 秒）。全量 **1156/1156**。
+
+  「只跑一轮」那条曾经是**假绿**：用例只 `sleep(150)`，而 boot tick 的 `jitterMs` 是 3338ms，
+  断言早于它 fire —— 把撤销逻辑删掉它也照样过。现在 `__test.bootTimerPending(id)` 读的是
+  定时器句柄的 `_destroyed`（`clearTimeout` 后才为 true，不是「map 里有没有这个 key」），
+  并补 `__test.watchTimerPending(id)` 断言「恢复后 interval 还在」——少了它，
+  把 resume 里的 `startWatcher()` 整行删掉（= 恢复后根本没有任何定时器）三条否定式断言全绿。
+  变异验证：删撤销块 / 只删 `clearTimeout` / 删 `startWatcher`，三种改法分别红在对应断言上。
+
 - **通用 `github` 工具写方法请求体为空**（@zuojinxin #63）：`gh api` 只有显式 `--input -` 才读取 stdin；统一请求构造现在让 POST / PATCH / PUT / DELETE 在带 body 时同时传该参数与原始 JSON，GET / HEAD 及无 body DELETE 不附加空 stdin。补真实请求构造回归，并用工具本身完成 `POST /markdown` 端到端验证。
 
 - **自激唤醒：处理完一条 issue 会把自己再叫醒一次**（2026-11-16 真机，同一晚 `#95` / `#96` / `#97` 被重复唤醒 3 次，其中 2 次什么都不用做）。
