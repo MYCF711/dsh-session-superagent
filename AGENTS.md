@@ -131,7 +131,7 @@ node scripts/render-preview.mjs preview.html
 
 ## 十、当前基线
 
-0.11.0；全量 **1149/1149**、preflight **43 项**（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、UI **11/11**。
+0.11.0；全量 **1151/1151**、preflight **43 项**（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、UI **11/11**。
 真实 Chromium：Issue #58 多段添加 / 编辑 / 删除 / 保存四项通过；Issue #60「只看新评论」新建、编辑保存与两次回读 **4/4** 通过。完整 harness 的 rc.2 Orbit/Modal 三项失败已由未改 main 复现（main 57/60，本分支含 #60 为 65/68），不记为本功能通过项。
 未验：真实 DSH WebView 重载后的读屏 / 触摸 / IME、真实 GitHub/Gitee 写操作。没有实测不得写成通过。
 

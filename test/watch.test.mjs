@@ -1913,6 +1913,44 @@ test('★★★ ack 清空 pending 后，旧轮询快照不许把它复活（自
     'lastAcked 只许前进')
 })
 
+test('★★★ ack #7 时，未 ack 的 #8 即使时间更早也必须保留（2026-11-17 外部 review 第二轮）', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  // 上一版拿全局 lastAcked.at（所有 ack 里最晚的 00:20）当阈值，#8 的 00:10 被
+  // 判成「早于 ack」直接删掉 —— 可 #8 根本没 ack，下一轮该重提的重提不了。
+  const stored = {
+    pending: { 8: { tries: 1, at: '2026-11-05T00:10:00.000Z' } },
+    lastAcked: { numbers: [7], at: '2026-11-05T00:20:00.000Z' },
+    acked: { 7: { at: '2026-11-05T00:20:00.000Z' } },
+  }
+  const polled = {
+    pending: {
+      7: { tries: 1, at: '2026-11-05T00:00:00.000Z' },
+      8: { tries: 1, at: '2026-11-05T00:10:00.000Z' },
+    },
+    lastAcked: null,
+    acked: null,
+  }
+
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, { 8: { tries: 1, at: '2026-11-05T00:10:00.000Z' } },
+    '#7 被 ack（00:00 <= 00:20）要删；#8 没 ack，00:10 不是它的 ack 时间，必须留')
+})
+
+test('★★★ 老状态文件只有 lastAcked.numbers 没有 acked 明细时，按 lastAcked.at 兜底', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  const stored = {
+    pending: { 7: { tries: 1, at: '2026-11-05T00:00:00.000Z' } },
+    lastAcked: { numbers: [7], at: '2026-11-05T00:20:00.000Z' },
+    // acked 缺失（升级前的状态文件）
+  }
+  const polled = { pending: {}, lastAcked: null, acked: null }
+
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, {}, '#7 在 lastAcked.numbers 里，00:00 <= 00:20 该删')
+})
+
 test('正常「已唤醒但还没 ack」的 pending 仍然重提（seen 不是 ack 凭证）', async () => {
   const { recordPendingWake, pendingRetry } = await import('../lib/watch.js')
   // reviewer 给的真实输入：成功唤醒后 seen[number] 本来就会推到 item.updated_at，
