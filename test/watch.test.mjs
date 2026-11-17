@@ -1888,77 +1888,68 @@ test('提过但没回执的条目，下一轮再提一次（Ticket「open」的�
   assert.equal(pendingRetry(clearPending(pending, [7, 8]), items, { now: Date.parse('2026-11-05T00:20:00Z') }).retry.length, 0)
 })
 
-test('★★★ 已 ack 过的 pending 条目不许再提（自激唤醒，2026-11-16 真机 #97）', async () => {
-  const { recordPendingWake, pendingRetry } = await import('../lib/watch.js')
-  // 真机时间线：15:09:09 首次唤醒 → 15:13:36 ack（seen 推到当下）→ 15:14:12 下一轮
-  const first = '2026-11-16T15:09:09.558Z'
-  const ackedAt = '2026-11-16T15:13:36.271Z'
-  const pending = recordPendingWake({}, [97], first)
-  // 条目的 updated_at 是 ack 之前那一次变化（15:12:18 = 我自己的评论/标签）
-  const items = [{ number: 97, state: 'open', updated_at: '2026-11-16T15:12:18Z' }]
-  const seen = { 97: ackedAt }
+test('★★★ ack 清空 pending 后，旧轮询快照不许把它复活（自激唤醒，2026-11-16 真机 #97）', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  // 真机时间线：15:13:36 watch_ack 清空 pending 并写下 lastAcked / acked；
+  // 并发 tick 手里还是 ack **之前**的快照（15:09:09 那次 recordPendingWake）。
+  const stored = {
+    pending: {},
+    lastAcked: { numbers: [97], at: '2026-11-16T15:13:36.271Z' },
+    acked: { 97: { at: '2026-11-16T15:13:36.271Z' } },
+  }
+  const polled = {
+    pending: { 97: { tries: 1, at: '2026-11-16T15:09:09.558Z' } },
+    lastAcked: null,
+    acked: null,
+  }
 
-  const { retry, stillPending } = pendingRetry(pending, items, {
-    now: Date.parse('2026-11-16T15:14:12.025Z'),
-    // 冷却窗口早就过了（处理一条 issue 要十几分钟，180 秒挡不住）
-    cooldownMs: 180_000,
-    seen,
-  })
-  assert.equal(retry.length, 0, 'ack 已经把水位推过这条更新 —— 再提一次就是自己叫醒自己')
-  assert.equal(stillPending[97], undefined, '而且要从 pending 里摘掉，别每轮都算一遍')
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, {},
+    'ack 之后（at <= ackAt）的旧 pending 必须被丢掉，否则下一轮又重提一次')
+  assert.deepEqual(merged.acked, { 97: { at: '2026-11-16T15:13:36.271Z' } },
+    'acked 只增不删 —— 旧快照的 null 不能把它抹掉')
+  assert.deepEqual(merged.lastAcked, stored.lastAcked,
+    'lastAcked 只许前进')
 })
 
-test('水位没盖住这条更新时，仍然照常重提（别把「真没回执」一起吞掉）', async () => {
+test('正常「已唤醒但还没 ack」的 pending 仍然重提（seen 不是 ack 凭证）', async () => {
   const { recordPendingWake, pendingRetry } = await import('../lib/watch.js')
-  const pending = recordPendingWake({}, [97], '2026-11-16T15:09:09.558Z')
-  // ack 之后上游又有人评论 ⇒ updated_at 比 seen 更新 ⇒ 这是**真·新动态**，必须提
-  const items = [{ number: 97, state: 'open', updated_at: '2026-11-16T16:00:00Z' }]
-  const { retry } = pendingRetry(pending, items, {
-    now: Date.parse('2026-11-16T16:01:00Z'),
-    cooldownMs: 180_000,
-    seen: { 97: '2026-11-16T15:13:36.271Z' },
-  })
-  assert.equal(retry.length, 1)
-  assert.equal(retry[0].retryOf.tries, 1)
-})
-
-test('不传 seen 时退化成老行为（向后兼容，别让老调用方静默变哑）', async () => {
-  const { recordPendingWake, pendingRetry } = await import('../lib/watch.js')
-  const pending = recordPendingWake({}, [7], '2026-11-05T00:00:00Z')
-  const items = [{ number: 7, state: 'open', updated_at: '2026-11-05T00:00:00Z' }]
-  assert.equal(pendingRetry(pending, items, { now: Date.parse('2026-11-05T00:20:00Z') }).retry.length, 1)
-})
-
-test('★ 判据只认 seen[key]，不认「这一页里最新的那条」（floor 陷阱）', async () => {
-  const { recordPendingWake, pendingRetry } = await import('../lib/watch.js')
-  const pending = recordPendingWake({}, [7], '2026-11-05T00:00:00Z')
-  // #99 的 seen 很新、但 #7 没有 seen 记录 ⇒ #7 是「真没回执」，必须提。
-  // 如果有人把判据写成 `Math.max(...Object.values(seen))`（拿整页最新当基线），
-  // 这条会红 —— 那正是 partitionItems 里记过的 floor 陷阱。
+  // reviewer 给的真实输入：成功唤醒后 seen[number] 本来就会推到 item.updated_at，
+  // 并不要求 ack —— 所以 updated_at <= seen 是常态，不能当「已消费」。
+  const pending = recordPendingWake({}, [7, 8], '2026-11-05T00:00:00Z')
   const items = [
     { number: 7, state: 'open', updated_at: '2026-11-05T00:00:00Z' },
-    { number: 99, state: 'open', updated_at: '2026-11-05T00:19:00Z' },
+    { number: 8, state: 'open', updated_at: '2026-11-05T00:20:00Z' },
   ]
-  const { retry } = pendingRetry(pending, items, {
+
+  const { retry, stillPending } = pendingRetry(pending, items, {
     now: Date.parse('2026-11-05T00:20:00Z'),
-    seen: { 99: '2026-11-05T00:19:00Z' },
   })
-  assert.equal(retry.length, 1, '#7 没有自己的消费记录 —— 别人的水位不许替它作证')
+
+  assert.equal(retry.length, 2, '#7 只是已唤醒、还没 ack，冷却过了就该继续重提')
   assert.equal(retry[0].number, 7)
+  assert.equal(retry[0].retryOf.tries, 1)
+  assert.equal(stillPending[7] !== undefined, true, '重提过的还留在 pending 里')
 })
 
-test('★★ 接线层：pollWithItems 必须把 seen 传给 pendingRetry', async () => {
-  const { readFileSync } = await import('node:fs')
-  const src = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
-  // 第二个实参在 onlyNewComments 合入后变成 `onlyNewComments ? considered : items`，
-  // 所以只锚定函数名与第一个实参，第三个实参（options）单独断言。
-  const line = src.split('\n').find((l) => l.includes('pendingRetry(entry.pending,'))
-  assert.ok(line, '调用点不见了 —— 改名/删除了就先更新这条守卫')
-  assert.match(line, /seen:\s*entry\.seen/,
-    '不传 seen 时 pendingRetry 退化成只按重试次数判 —— 自激唤醒原样回来')
-  // 诚实标注：这是源码级判据，只挡「整行删掉 / 少一个参数」，
-  // 挡不住「传进去但传错了」。真正的行为级替身需要 pollWithItems 导出，
-  // 而它是 index.js 内部函数（一整个模块的副作用），所以这里只做到这一步。
+test('ack 之后新产生的 pending 必须保留（别被 ack 一起吞掉）', async () => {
+  const { mergePollResult } = await import('../lib/watch.js')
+  const stored = {
+    pending: {},
+    lastAcked: { numbers: [7], at: '2026-11-05T00:20:00Z' },
+    acked: { 7: { at: '2026-11-05T00:20:00Z' } },
+  }
+  const polled = {
+    pending: { 8: { tries: 1, at: '2026-11-05T00:30:00Z' } },
+    lastAcked: null,
+    acked: null,
+  }
+
+  const merged = mergePollResult(stored, polled)
+
+  assert.deepEqual(merged.pending, { 8: { tries: 1, at: '2026-11-05T00:30:00Z' } },
+    'ack 之后（at > ackAt）的 pending 是新回执，必须留下')
 })
 
 test('唤醒消息里要标出「上一轮提过，还没回执」', async () => {
