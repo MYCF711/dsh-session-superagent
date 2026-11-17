@@ -20,7 +20,7 @@ test.afterEach?.(() => {
 })
 process.env.DSH_SUPERAGENT_NO_POLL = '1'
 
-const { apply } = await import('../lib/index.js')
+const { apply, __test } = await import('../lib/index.js')
 
 const tools = []
 const routes = new Map()
@@ -1961,4 +1961,110 @@ test('HTTP 与工具的 intervalSec 都先取整再夹取（T40 W7：30.7 不能
   const entry = state.watchers['acme/round#session-test']
   assert.equal(entry.intervalSec, 31, 'HTTP 必须与 watch_start 一样取整')
   await call('POST', '/session-superagent/watch', { action: 'delete', id: 'acme/round#session-test' })
+})
+
+// ── PR #65 review：人工触发（「立即」/ 恢复）必须真的跑起来 ────────────────
+// 这三条都是行为级：以前只测了纯函数 `applyWatcherAction`（清 nextAt），
+// 而 review 指出的正是「路由分支到底有没有真的发请求」没人守。
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const readWatchers = () => {
+  const raw = JSON.parse(readFileSync(join(STATE_DIR, 'watchers.json'), 'utf8'))
+  return raw.state || raw
+}
+
+test('POST /watch poll：退避窗口内点「立即」真的会跑一轮（PR 守，review High）', async () => {
+  const calls = []
+  // 断言「进入轮询那一刻退避已经清干净」，而不是去读回写盘后的文件 ——
+  // 写回是 `.finally` 里的异步动作，和断言抢时间会 flaky（实测 4 轮里 2 轮红）。
+  const seenAtPoll = []
+  const restore = __test.setManualPoller(async (ctx, entry, everyMs) => {
+    calls.push({ id: entry.id, everyMs })
+    seenAtPoll.push({ nextAt: entry.nextAt, deferReason: entry.deferReason, consecutiveFailures: Number(entry.consecutiveFailures) || 0 })
+  })
+  try {
+    const created = await call('POST', '/session-superagent/watch', { repo: 'o/instant', sessionId: 's1', intervalSec: 60, watchKind: 'pr' })
+    const id = created.json().id
+    assert.equal(id, 'pr:o/instant#s1')
+
+    // 盘上塞一个 25 分钟后的退避窗口 + 3 次连续失败（review 的复现条件）
+    const file = join(STATE_DIR, 'watchers.json')
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    const st = raw.state || raw
+    st.watchers[id].nextAt = new Date(Date.now() + 25 * 60 * 1000).toISOString()
+    st.watchers[id].deferReason = 'network'
+    st.watchers[id].consecutiveFailures = 3
+    writeFileSync(file, JSON.stringify(raw, null, 2))
+
+    const res = await call('POST', '/session-superagent/watch', { action: 'poll', id })
+    assert.equal(res.statusCode, 202, res.body)
+    await sleep(60)
+
+    // 关键断言：`pollPrOnce` 第 2 步就是 `if (entry.nextAt && …) return`，
+    // 路由却照回 202 —— 用户看到「点了没反应」。所以「立即」必须先清退避。
+    assert.equal(calls.length, 1, '退避窗口内点「立即」必须真的跑一轮，不能静默空转：' + JSON.stringify(calls))
+    assert.equal(calls[0].id, id)
+    // 这是 High 的正题：`pollPrOnce` 第 2 步 `if (entry.nextAt && …) return` 会静默空转，
+    // 所以进轮询前 nextAt 必须已是 null（不清就 0 次 gh 调用，而路由照样回 202）。
+    assert.deepEqual(
+      seenAtPoll,
+      [{ nextAt: null, deferReason: null, consecutiveFailures: 0 }],
+      '进入轮询时退避必须已清干净：' + JSON.stringify(seenAtPoll),
+    )
+
+    await call('POST', '/session-superagent/watch', { action: 'delete', id })
+  } finally { restore() }
+})
+
+test('POST /watch resume：真的补跑一轮、且只跑一轮；暂停时不跑（review Medium）', async () => {
+  const calls = []
+  const restore = __test.setManualPoller(async (ctx, entry) => {
+    calls.push(entry.id)
+    // 模拟 poller 的产物，用来证明收尾确实 persistEntry 落盘了
+    entry.lastPoll = '2026-11-18T00:00:00.000Z'
+  })
+  try {
+    const created = await call('POST', '/session-superagent/watch', { repo: 'o/revive', sessionId: 's1', intervalSec: 60, watchKind: 'pr' })
+    const id = created.json().id
+
+    await call('POST', '/session-superagent/watch', { action: 'pause', id })
+    await sleep(30)
+    assert.deepEqual(calls, [], '暂停态不该轮询')
+
+    const resumed = await call('POST', '/session-superagent/watch', { action: 'resume', id })
+    assert.equal(resumed.statusCode, 200)
+    await sleep(150)
+    // 「只跑一轮」：resume 分支自己补一次，`startWatcher` 排的 boot tick 必须被撤掉，
+    // 否则 5 秒内会连跑两次（多一次 API 调用，onlyNewComments 下更明显）。
+    assert.deepEqual(calls, [id], '恢复必须补跑且只跑一轮：' + JSON.stringify(calls))
+
+    assert.equal(readWatchers().watchers[id].lastPoll, '2026-11-18T00:00:00.000Z', '收尾必须 persistEntry 落盘')
+
+    await call('POST', '/session-superagent/watch', { action: 'delete', id })
+  } finally { restore() }
+})
+
+test('POST /watch resume：离线开关生效，人工补跑也要挡住（review Low 1）', async () => {
+  // 本文件全局 `DSH_SUPERAGENT_NO_POLL=1`（`startWatcher` 只登记不轮询，路由单测靠它避免真请求）。
+  // 新加的「恢复后补跑」是绕过 startWatcher 的独立调用 —— 必须自己也尊重这个开关，
+  // 否则测试会在无凭证环境里真的打 GitHub。
+  // 判别依据：没装替身时若真的跑了一轮，离线 gh 返回的假内容是合法 GraphQL 以外的东西，
+  // 必然解析失败并累加 consecutiveFailures；开关生效时它必须还是 0。
+  // 本文件的 afterEach 会用模块加载时的 env 快照还原 process.env，
+  // 而快照是在 `NO_POLL='1'` 之前拍的 —— 跑到这里时开关可能已经被还原掉了，
+  // 所以必须在本用例内显式设一次（afterEach 会负责收拾）。
+  const previousNoPoll = process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_NO_POLL = '1'
+  const created = await call('POST', '/session-superagent/watch', { repo: 'o/offline-revive', sessionId: 's1', intervalSec: 60, watchKind: 'pr' })
+  const id = created.json().id
+  await call('POST', '/session-superagent/watch', { action: 'pause', id })
+  await call('POST', '/session-superagent/watch', { action: 'resume', id })
+  await sleep(250)
+
+  const entry = readWatchers().watchers[id]
+  assert.equal(Number(entry.consecutiveFailures) || 0, 0, '离线开关没生效：人工补跑不该真的发起轮询')
+  assert.equal(entry.lastError, null, '离线开关没生效：不该有失败记录')
+  if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
+  else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
+  await call('POST', '/session-superagent/watch', { action: 'delete', id })
 })

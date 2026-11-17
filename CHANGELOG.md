@@ -31,6 +31,23 @@
 
   回归：`applyWatcherAction` 恢复清窗口断言 + `/state` 兜底 60。
 
+- **上一版没修干净的三处**（PR #65 review 实测指出，均已补回归）：
+
+  1. **PR 守在退避期里点「立即」仍然静默跳过**：清退避只做在 `applyWatcherAction('resume')` 里，
+     `action: 'poll'` 分支直接把 entry 交给 `pollPrOnce`，而它第 2 步就是
+     `if (entry.nextAt && Date.now() < Date.parse(entry.nextAt)) return` —— 路由回 `202 {polling:true}`、
+     gh 调用 0 次、前端转完圈就停。`nextAt` 还剩 25 分钟时实测 `{"ghCalls":0,"nextAtStill":true}`。
+     新增 `runManualPoll(entry)`：清退避 → 过离线开关 → `inFlight` 去重 → 按 kind 分流，三个入口共用。
+  2. **PR 守的 gh 超时没接 `isGhTimeout`**：上一版只改了 issue 守，PR 守仍是
+     `{"consecutiveFailures":1,"nextAt":"…","lastError":"pr poll: timeout executing gh"}`，
+     连续两三次就到 30 分钟上限。抽成 `absorbGhTimeout(entry, res)`，两处列表失败分支共用。
+  3. **恢复后清退避却留着 `consecutiveFailures`**：第一次失败立刻从高位算退避、又跳回 30 分钟。
+     `clearBackoff` 现在一并清零。
+
+  顺带：「恢复后立即轮询」现在会把 `startWatcher` 刚排的 boot tick 撤掉，避免 5 秒内连跑两轮；
+  行为级回归补 4 条（`/watch` 的 poll 必须真进轮询、resume 只跑一轮且落盘、`DSH_SUPERAGENT_NO_POLL`
+  对人工触发同样生效、PR 守超时只等 30 秒）。全量 **1156/1156**。
+
 - **通用 `github` 工具写方法请求体为空**（@zuojinxin #63）：`gh api` 只有显式 `--input -` 才读取 stdin；统一请求构造现在让 POST / PATCH / PUT / DELETE 在带 body 时同时传该参数与原始 JSON，GET / HEAD 及无 body DELETE 不附加空 stdin。补真实请求构造回归，并用工具本身完成 `POST /markdown` 端到端验证。
 
 - **自激唤醒：处理完一条 issue 会把自己再叫醒一次**（2026-11-16 真机，同一晚 `#95` / `#96` / `#97` 被重复唤醒 3 次，其中 2 次什么都不用做）。

@@ -182,11 +182,16 @@ test('applyWatcherAction: pause / resume / delete 只动目标那一条', () => 
   // 定时器 tick 的第一句就会静默跳过 —— 用户看到的就是「恢复后怎么也不触发」。
   state.watchers['a/b#s1'].nextAt = new Date(Date.now() + 25 * 60 * 1000).toISOString()
   state.watchers['a/b#s1'].deferReason = 'backoff'
+  // 失败计数一起清：`bumpFailure` 按它算指数退避，留着高位等于人工重试只要
+  // 失败一次就立刻跳回 30 分钟上限（PR #65 review Low 2）。
+  state.watchers['a/b#s1'].consecutiveFailures = 4
   assert.deepEqual(applyWatcherAction(state, { action: 'resume', id: 'a/b#s1' }), { ok: true, action: 'resume', id: 'a/b#s1', enabled: true })
   assert.equal(state.watchers['a/b#s1'].lastError, null, '恢复时清掉旧的错误，别让卫星一上来就是红的')
   assert.equal(state.watchers['a/b#s1'].nextAt, null, '恢复时必须清退避窗口，否则 tick 会静默跳过（2026-11-17 用户报障）')
   assert.equal(state.watchers['a/b#s1'].deferReason, null, '恢复时清掉旧的推迟原因')
+  assert.equal(state.watchers['a/b#s1'].consecutiveFailures, 0, '恢复时清掉失败计数，从最短间隔重新算退避')
   assert.equal(state.watchers['c/d#s2'].nextAt, undefined, '不该动别的条目')
+  assert.equal(state.watchers['c/d#s2'].consecutiveFailures, undefined, '不该动别的条目')
 
   state = makeState()
   assert.deepEqual(applyWatcherAction(state, { action: 'delete', id: 'a/b#s1' }), { ok: true, action: 'delete', id: 'a/b#s1', deleted: true })
@@ -2466,6 +2471,29 @@ test('pollPrOnce 不在活跃时段时早退：不发请求、不唤醒、不推
     assert.match(String(entry.lastDeferred), /不在活跃时段/)
     // 顺带记住下一次窗口时间：enterActiveHoursDefer 必须写 nextAt，否则 tick 会立刻重试
     assert.ok(entry.nextAt, '要排下一次')
+  })
+})
+
+test('pollPrOnce 列表 gh 超时只等 ~30 秒重试，不进 30 分钟退避（PR #65 review Medium）', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('pr-gh-timeout')
+    const entry = prEntry()
+    mod.__test.writeState({ watchers: { [entry.id]: entry } })
+    // `run()` 超时时的真实形状：`resolve({ code: 'timeout', stdout, stderr })`
+    const ghRun = async () => ({ code: 'timeout', stdout: '', stderr: '' })
+    const before = Date.now()
+    // `pollPrOnce` 只改内存里的 entry，写盘由调用方（tick / runManualPoll）负责 ——
+    // 所以断言要看这个对象本身，回来再 readState 拿到的是上一轮的旧值。
+    const target = mod.__test.readState().watchers[entry.id]
+    await mod.__test.pollPrOnce({ get: () => undefined }, target, 300_000, null, { ghRun, selfLogin: 'me' })
+    const after = target
+    // 关键：超时不能算「仓库有问题」。以前它被 classifyGhError 归到 network 分类，
+    // 走 permanentBackoffMs / 指数退避，最长 30 分钟 —— 正是用户抱怨的「网络一抖就长时间不叫」。
+    assert.equal(Number(after.consecutiveFailures) || 0, 0, '超时不是失败，不该累加退避级数')
+    assert.equal(after.deferReason, 'timeout', '推迟原因要能区分超时和真报错')
+    assert.match(String(after.lastError), /超时/, '错误文案要说人话：' + after.lastError)
+    const waitMs = Date.parse(after.nextAt) - before
+    assert.ok(waitMs > 0 && waitMs <= 40_000, '只等 ~30 秒，不是 30 分钟：' + waitMs)
   })
 })
 
