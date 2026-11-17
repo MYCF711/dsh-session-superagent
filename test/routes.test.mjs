@@ -2023,9 +2023,22 @@ test('POST /watch resume：真的补跑一轮、且只跑一轮；暂停时不�
     // 模拟 poller 的产物，用来证明收尾确实 persistEntry 落盘了
     entry.lastPoll = '2026-11-18T00:00:00.000Z'
   })
+  // boot tick 只有 `startWatcher` 在**没开 `DSH_SUPERAGENT_NO_POLL`** 时才排，所以这里必须
+  // 关掉它；但同一个开关还短路着 create 里的 `precheckRepo()` —— 一关就会真跑两条
+  // `gh api`（实测裸 `node --test` 下这条用例 292ms → 2450ms，还会吃 search 配额）。
+  // 所以用 `DSH_SUPERAGENT_OFFLINE=1` 单独管住「别真打网络」，两个开关各司其职。
+  const previousNoPoll = process.env.DSH_SUPERAGENT_NO_POLL
+  const previousOffline = process.env.DSH_SUPERAGENT_OFFLINE
+  delete process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_OFFLINE = '1'
   try {
     const created = await call('POST', '/session-superagent/watch', { repo: 'o/revive', sessionId: 's1', intervalSec: 60, watchKind: 'pr' })
     const id = created.json().id
+
+    // 先确认这条用例的场景真的成立：新建后 `startWatcher` 排了一个未触发的 boot tick。
+    // 若这里是 false，下面「resume 之后必须没有」就变成了恒真、守不住任何东西
+    //（jitter 若变成 0 会走 `else { tick() }` 而不排 boot tick，同样在这里 fail-loud）。
+    assert.equal(__test.bootTimerPending(id), true, '新建守应先排一个 boot tick，否则这条用例是空转')
 
     await call('POST', '/session-superagent/watch', { action: 'pause', id })
     await sleep(30)
@@ -2037,11 +2050,32 @@ test('POST /watch resume：真的补跑一轮、且只跑一轮；暂停时不�
     // 「只跑一轮」：resume 分支自己补一次，`startWatcher` 排的 boot tick 必须被撤掉，
     // 否则 5 秒内会连跑两次（多一次 API 调用，onlyNewComments 下更明显）。
     assert.deepEqual(calls, [id], '恢复必须补跑且只跑一轮：' + JSON.stringify(calls))
+    // 上面那条 `sleep(150)` 短于 `jitterMs('pr:o/revive#s1', 5000)`≈3338ms，
+    // 所以只数调用数挡不住「没撤 boot tick」这个回归 —— 必须直接看它还在不在。
+    // `c71d94c` 的 review 就是这么把它变绿的：删掉撤销三行，调用数断言照过。
+    // 边界说明：这条缝证明的是「撤销那三行还在」，而不是「clearTimeout 真生效」——
+    // 只删 `clearTimeout` 留 `delete` 它不会红（3338ms 内 tick 本来也不会 fire）。
+    assert.equal(__test.bootTimerPending(id), false, 'resume 补跑之后必须撤掉 boot tick，否则 5 秒内会再跑一轮')
+    // 反向的「否定式断言陷阱」：上面两条都只说「没有 boot tick / 没有多跑一轮」，
+    // 把 resume 分支的 `startWatcher(...)` 整行删掉它们照样全绿 —— 而那正是用户报的
+    // 「恢复后不触发」（对抗性审计 m3 变体：恢复后 30 秒内一次轮询都没有）。
+    // 所以必须再要一条**肯定式**断言：恢复后 interval 定时器得在。
+    assert.equal(__test.watchTimerPending(id), true, '恢复后 interval 定时器必须还在，否则「恢复」等于停机')
 
     assert.equal(readWatchers().watchers[id].lastPoll, '2026-11-18T00:00:00.000Z', '收尾必须 persistEntry 落盘')
 
     await call('POST', '/session-superagent/watch', { action: 'delete', id })
-  } finally { restore() }
+    assert.equal(__test.bootTimerPending(id), false, '删除后也不该留着 boot tick')
+    assert.equal(__test.watchTimerPending(id), false, '删除后 interval 必须停掉')
+  } finally {
+    restore()
+    // 断言中途抛错时也别把守留在共享 STATE_DIR 里（delete 路由本身幂等）
+    await call('POST', '/session-superagent/watch', { action: 'delete', id: 'pr:o/revive#s1' }).catch(() => {})
+    if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
+    else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
+    if (previousOffline === undefined) delete process.env.DSH_SUPERAGENT_OFFLINE
+    else process.env.DSH_SUPERAGENT_OFFLINE = previousOffline
+  }
 })
 
 test('POST /watch resume：离线开关生效，人工补跑也要挡住（review Low 1）', async () => {

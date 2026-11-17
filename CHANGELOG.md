@@ -48,6 +48,13 @@
   行为级回归补 4 条（`/watch` 的 poll 必须真进轮询、resume 只跑一轮且落盘、`DSH_SUPERAGENT_NO_POLL`
   对人工触发同样生效、PR 守超时只等 30 秒）。全量 **1156/1156**。
 
+  「只跑一轮」那条曾经是**假绿**：用例只 `sleep(150)`，而 boot tick 的 `jitterMs` 是 3338ms，
+  断言早于它 fire —— 把撤销逻辑删掉它也照样过。现在 `__test.bootTimerPending(id)` 读的是
+  定时器句柄的 `_destroyed`（`clearTimeout` 后才为 true，不是「map 里有没有这个 key」），
+  并补 `__test.watchTimerPending(id)` 断言「恢复后 interval 还在」——少了它，
+  把 resume 里的 `startWatcher()` 整行删掉（= 恢复后根本没有任何定时器）三条否定式断言全绿。
+  变异验证：删撤销块 / 只删 `clearTimeout` / 删 `startWatcher`，三种改法分别红在对应断言上。
+
 - **通用 `github` 工具写方法请求体为空**（@zuojinxin #63）：`gh api` 只有显式 `--input -` 才读取 stdin；统一请求构造现在让 POST / PATCH / PUT / DELETE 在带 body 时同时传该参数与原始 JSON，GET / HEAD 及无 body DELETE 不附加空 stdin。补真实请求构造回归，并用工具本身完成 `POST /markdown` 端到端验证。
 
 - **自激唤醒：处理完一条 issue 会把自己再叫醒一次**（2026-11-16 真机，同一晚 `#95` / `#96` / `#97` 被重复唤醒 3 次，其中 2 次什么都不用做）。
