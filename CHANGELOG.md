@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- **通用 `github` 工具写方法请求体为空**（@zuojinxin #63）：`gh api` 只有显式 `--input -` 才读取 stdin；统一请求构造现在让 POST / PATCH / PUT / DELETE 在带 body 时同时传该参数与原始 JSON，GET / HEAD 及无 body DELETE 不附加空 stdin。补真实请求构造回归，并用工具本身完成 `POST /markdown` 端到端验证。
+
 - **自激唤醒：处理完一条 issue 会把自己再叫醒一次**（2026-11-16 真机，同一晚 `#95` / `#96` / `#97` 被重复唤醒 3 次，其中 2 次什么都不用做）。
   `pendingRetry` 判断「提过但没回执」时**只看重试次数，完全不看水位**：
 
