@@ -6,15 +6,12 @@
 //
 // 用法：node scripts/simulate-hour.mjs [分钟数]
 import {
-  advanceSeen,
   batchFresh,
   mergeWakeTexts,
-  partitionItems,
   pruneWakeTimes,
-  recordReported,
   sessionWakesLastHour,
-  silentStreak,
 } from '../lib/watch.js'
+import { partitionItems, advanceSeen, recordReported, silentStreak } from '../test/fixtures/legacy-watermark.mjs'
 
 const MINUTES = Number(process.argv[2]) || 60
 const TICK_MS = 30_000

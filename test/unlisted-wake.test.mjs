@@ -91,7 +91,7 @@ const ITEMS = () => [
   issue(130, '2026-11-20T09:06:59.000Z'),
 ]
 
-test('批次里没列出的条目必须进 pending：只靠水位保护，一次 ack 就永久消失', async () => {
+test('v2 批次里没列出的条目不靠 pending，也能在 ack 后继续交付', async () => {
   const sent = []
   const tools = []
   const ctx = makeCtx(tools)
@@ -103,14 +103,8 @@ test('批次里没列出的条目必须进 pending：只靠水位保护，一次
 
   assert.equal(sent.length, 1, '应真的发出去一次')
   assert.match(sent[0], /另有 3 条：#132 #131 #130/, '现场形态：#131 只在「另有」一行里')
-  assert.deepEqual(
-    Object.keys(entry.pending || {}).sort(),
-    ['130', '131', '132', '133', '134'],
-    'pending 必须覆盖全部 fresh（含没列进正文的），否则「处理完这批再看」只是句话',
-  )
-  // 未列出的条目只登记、不消耗「最多提 2 次」的额度：连续两轮 fresh 不该把它烧光。
-  assert.equal(entry.pending['131'].tries, 0, '只在「另有」里的条目不许计重提次数')
-  assert.equal(entry.pending['134'].tries, 1, '正文列出的条目才 +1')
+  assert.deepEqual(Object.keys(entry.obs || {}).sort(), ['issue:133', 'issue:134'], '只有正文条目提交 delivered')
+  assert.equal(entry.obs['issue:131'], undefined, '未列出的 #131 不得提前交付')
 
   // 会话处理正文里的 #133：打标签 + ack。
   const ack = tools.find((tool) => tool.name === 'watch_ack')
@@ -131,6 +125,26 @@ test('批次里没列出的条目必须进 pending：只靠水位保护，一次
 
   assert.equal(sent.length, 2, '第二轮必须再唤醒一次')
   assert.match(sent[1], /#131 \[open\]/, '上一轮只出现在「另有」里的 #131 必须重新进入正文行，否则就是永久静默')
+})
+
+test('原生 v2：obs 只提交正文条目，下一轮未列条目继续交付', async () => {
+  const sent = []
+  const tools = []
+  const ctx = makeCtx(tools)
+  apply(ctx)
+  const entry = makeEntry('o/native#s1', 'o/native', { watermarkVersion: 2, round: 0, obs: {}, pending: {} })
+
+  await __test.pollWithItems(ctx, entry, 60000, parsed(ITEMS()), null, { wake: captureWake(sent) })
+  await wait(60)
+  assert.equal(entry.watermarkVersion, 2)
+  assert.equal(entry.obs['issue:134'].delivered.cursor.startsWith('h:'), true)
+  assert.equal(entry.obs['issue:131'], undefined, '未列条目不得提前写 delivered')
+
+  await __test.pollWithItems(ctx, entry, 60000, parsed(ITEMS()), null, { wake: captureWake(sent) })
+  await wait(60)
+  assert.equal(sent.length, 2)
+  assert.match(sent[1], /#131 \[open\]/)
+  assert.ok(entry.obs['issue:131'].delivered, '第二轮后 #131 才提交 delivered')
 })
 
 test('ack 不碰全局水位：队列为空也不推（防止把同页没列出的条目一起判成旧闻）', async () => {

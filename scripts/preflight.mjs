@@ -334,6 +334,14 @@ if (!FAST) {
   record('文档链接', res.status === 0, out[1] ? out[1].replace(/^PASS /, '') : '无输出')
 }
 
+// ⑥.46 房间依赖边界（防止跨房读写内部实现）
+{
+  const res = tryRun('node', ['scripts/check-rooms.mjs'], { timeout: 60000 })
+  const lines = String(res.stdout || '').trim().split(String.fromCharCode(10))
+  const bad = lines.filter((line) => line.startsWith('FAIL'))
+  record('房间依赖边界', res.status === 0 && bad.length === 0, bad[0] || lines[lines.length - 1] || '无输出')
+}
+
 // ⑥.49 并发隔离（两个会话守同一仓库时会不会互相踩）
 {
   const res = tryRun('node', ['scripts/verify-concurrency.mjs'], { timeout: 120000 })

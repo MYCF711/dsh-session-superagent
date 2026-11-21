@@ -4,7 +4,8 @@
 // 超过就说明有数组没封顶。
 //
 // 用法：node scripts/measure-growth.mjs [天数]
-import { bumpDailyWakes, pruneSeen, pruneWakeTimes, pushAbsorbed, pushEvent, pushFiltered, pushHistory } from '../lib/watch.js'
+import { pruneWakeTimes, pushEvent, pushFiltered, pushHistory } from '../lib/watch.js'
+import { bumpDailyWakes, pruneSeen, pushAbsorbed } from '../test/fixtures/legacy-watermark.mjs'
 
 const DAYS = Number(process.argv[2]) || 30
 const WATCHERS = 20

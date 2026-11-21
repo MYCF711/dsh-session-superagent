@@ -1,13 +1,21 @@
 {
   "name": "dsh-session-superagent",
-  "version": "0.11.0",
-  "workspaces": ["packages/*"],
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
   "description": "Session-level superagent for DeepSeek Harness: watch a GitHub repository and wake a session when something needs doing. Credentials never reach the model.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
     "./watch": "./lib/watch.js",
+    "./rooms/watermark-state": "./lib/rooms/watermark-state.js",
+    "./rooms/watermark-decision": "./lib/rooms/watermark-decision.js",
+    "./rooms/data-provider": "./lib/rooms/data-provider.js",
+    "./rooms/delivery": "./lib/rooms/delivery.js",
+    "./rooms/scheduler": "./lib/rooms/scheduler.js",
+    "./rooms/projection": "./lib/rooms/projection.js",
     "./redact": "./lib/redact.js",
     "./package.json": "./package.json",
     "./client": "./client.js",
@@ -17,6 +25,12 @@
   "files": [
     "lib/index.js",
     "lib/watch.js",
+    "lib/rooms/watermark-state.js",
+    "lib/rooms/watermark-decision.js",
+    "lib/rooms/data-provider.js",
+    "lib/rooms/delivery.js",
+    "lib/rooms/scheduler.js",
+    "lib/rooms/projection.js",
     "lib/gh-format.js",
     "lib/pr-watch.js",
     "lib/redact.js",

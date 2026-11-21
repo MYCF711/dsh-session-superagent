@@ -18,12 +18,12 @@ import {
   formatWatchText,
   hasAckLabel,
   normalizeFilters,
-  partitionItems,
   pickSuggestion,
   repoBadges,
   repoStructureNote,
   summarizeByRepo,
 } from '../lib/watch.js'
+import { partitionItems } from '../test/fixtures/legacy-watermark.mjs'
 
 const REPO = 'acme/widgets'
 const NOW = Date.UTC(2026, 10, 2, 10, 0, 0)

@@ -56,7 +56,7 @@ function graphReply(number, comments) {
       repository: {
         i0: {
           number,
-          comments: { nodes: comments.map((at) => ({ author: { login: 'octocat' }, createdAt: at })) },
+          comments: { totalCount: comments.length, nodes: comments.map((at, index) => ({ author: { login: 'octocat' }, createdAt: at, databaseId: index + 1 })) },
           timelineItems: { nodes: [] },
         },
       },
@@ -73,7 +73,7 @@ function githubDeps({ discussion = [], review = [], reviewError = false } = {}) 
       if (args.includes('graphql')) return { code: 0, stdout: JSON.stringify(graphReply(1, discussion)), stderr: '' }
       if (args.some((arg) => String(arg).includes('/pulls/'))) {
         if (reviewError) return { code: 1, stdout: '', stderr: 'review unavailable' }
-        return { code: 0, stdout: JSON.stringify(review.map((at) => ({ created_at: at }))), stderr: '' }
+        return { code: 0, stdout: JSON.stringify(review.map((at, index) => ({ created_at: at, id: 100 + index }))), stderr: '' }
       }
       if (args.some((arg) => String(arg).includes('/issues/'))) {
         return { code: 0, stdout: discussion.length ? JSON.stringify({ login: 'octocat', at: discussion.at(-1) }) : 'null', stderr: '' }
@@ -118,7 +118,7 @@ test('onlyNewComments：旧 discussion comment 不唤醒', async () => {
   const entry = makeEntry(1, { seen: { 1: OLD }, cursor: BASE })
   await poll(entry, [makeItem()], githubDeps({ discussion: [OLD] }))
   assert.equal(entry.deferReason, null)
-  assert.equal(entry.filterCounts['无新评论'], 1)
+  assert.equal(entry.obs['issue:1'].delivered, null)
   assert.deepEqual(entry.seen, { 1: OLD })
   assert.equal(entry.cursor, BASE)
 })
@@ -127,8 +127,8 @@ test('onlyNewComments：新 discussion comment 唤醒并把水位推到评论时
   const entry = makeEntry()
   await poll(entry, [makeItem()], githubDeps({ discussion: [NEW] }))
   assert.equal(entry.deferReason, 'observe')
-  assert.deepEqual(entry.seen, { 1: NEW })
-  assert.equal(entry.cursor, NEW)
+  assert.ok(entry.obs['issue:1'].observedRound)
+  assert.match(entry.obs['issue:1'].cursor, /^c:/)
 })
 
 test('onlyNewComments：GitHub PR discussion 与 review comments 取最新，review 能推水位', async () => {
@@ -136,9 +136,44 @@ test('onlyNewComments：GitHub PR discussion 与 review comments 取最新，rev
   const deps = githubDeps({ discussion: [OLD], review: [NEWER] })
   await poll(entry, [makeItem(1, { pull_request: {} })], deps)
   assert.equal(entry.deferReason, 'observe')
-  assert.deepEqual(entry.seen, { 1: NEWER })
-  assert.equal(entry.cursor, NEWER)
+  assert.ok(entry.obs['issue:1'].observedRound)
+  assert.match(entry.obs['issue:1'].cursor, /^c:/)
   assert.ok(deps.calls.some((args) => args.some((arg) => String(arg).includes('/pulls/1/comments'))), '必须查询 PR review comments')
+})
+
+test('onlyNewComments v2：同一 timestamp 的第二条评论靠计数继续候选', async () => {
+  const entry = makeEntry(1, { watermarkVersion: 2, round: 0, obs: {}, observe: true })
+  await poll(entry, [makeItem(1, { comments: 1 })], githubDeps({ discussion: [NEW] }))
+  assert.equal(entry.deferReason, 'observe')
+  const firstRound = entry.round
+  await poll(entry, [makeItem(1, { comments: 2 })], githubDeps({ discussion: [NEW, NEW] }))
+  assert.equal(entry.deferReason, 'observe', '同秒第二条评论不能被判成旧闻')
+  assert.ok(entry.round > firstRound)
+})
+
+test('onlyNewComments v2：review id 不遮蔽 discussion 同秒新增', async () => {
+  const entry = makeEntry(1, { watermarkVersion: 2, round: 0, obs: {}, observe: true })
+  await poll(entry, [makeItem(1, { pull_request: {}, comments: 1 })], githubDeps({ discussion: [NEW], review: [NEW] }))
+  const firstRound = entry.round
+  await poll(entry, [makeItem(1, { pull_request: {}, comments: 2 })], githubDeps({ discussion: [NEW, NEW], review: [NEW] }))
+  assert.equal(entry.deferReason, 'observe')
+  assert.ok(entry.round > firstRound, 'discussion 变化必须进入独立通道指纹')
+})
+
+test('onlyNewComments v2：GraphQL→REST 与下次 GraphQL 恢复不产生新内容', async () => {
+  const entry = makeEntry(1, { watermarkVersion: 2, round: 0, obs: {}, observe: true })
+  const fallback = {
+    ghRun: async (_file, args) => {
+      if (args.includes('graphql')) return { code: 1, stdout: '', stderr: 'temporary' }
+      if (args.some((arg) => String(arg).includes('/pulls/'))) return { code: 0, stdout: JSON.stringify([{ created_at: NEW, id: 100 }]) }
+      return { code: 0, stdout: JSON.stringify({ login: 'octocat', at: NEW }), stderr: '' }
+    },
+  }
+  await poll(entry, [makeItem(1, { pull_request: {}, comments: 1 })], fallback)
+  const firstRound = entry.round
+  await poll(entry, [makeItem(1, { pull_request: {}, comments: 1 })], githubDeps({ discussion: [NEW], review: [NEW] }))
+  assert.equal(entry.deferReason, null, '探测路径恢复不是新评论')
+  assert.equal(entry.round, firstRound)
 })
 
 test('onlyNewComments：评论查询失败单独记账，不唤醒、不推水位且下轮强制重试', async () => {
@@ -182,8 +217,8 @@ test('onlyNewComments：Gitee PR discussion 与 review 两类评论取最新', a
   }
   await poll(entry, [makeItem(8, { pull_request: {} })], { fetchImpl })
   assert.equal(entry.deferReason, 'observe')
-  assert.deepEqual(entry.seen, { 8: NEWER })
-  assert.equal(entry.cursor, NEWER)
+  assert.ok(entry.obs['issue:8'].observedRound)
+  assert.match(entry.obs['issue:8'].cursor, /^c:/)
   assert.ok(calls.some((url) => url.includes('/pulls/8/comments?per_page=100')), '要有 pull discussion')
   assert.ok(calls.some((url) => url.includes('/pulls/8/comments?comment_type=pr_comment')), '要有 PR review')
 })
@@ -197,7 +232,8 @@ test('onlyNewComments：Gitee issue discussion 新评论唤醒并走 issues 端�
   }
   await poll(entry, [makeItem(9)], { fetchImpl })
   assert.equal(entry.deferReason, 'observe')
-  assert.deepEqual(entry.seen, { 9: NEW })
+  assert.ok(entry.obs['issue:9'].observedRound)
+  assert.match(entry.obs['issue:9'].cursor, /^c:/)
   assert.ok(calls.some((url) => url.includes('/issues/9/comments?per_page=100')))
   assert.ok(calls.every((url) => !url.includes('comment_type=pr_comment')), '普通 issue 不应查询 PR review')
 })
@@ -218,7 +254,7 @@ test('onlyNewComments：Gitee discussion 恰好 500 条时确认第 6 页为空�
   await poll(entry, [makeItem(500)], { fetchImpl })
   assert.deepEqual(pages, [1, 2, 3, 4, 5, 6])
   assert.equal(entry.deferReason, 'observe')
-  assert.deepEqual(entry.seen, { 500: NEW })
+  assert.ok(entry.obs['issue:500'].observedRound)
   assert.equal(entry.filterCounts['评论获取失败'], undefined)
 })
 
@@ -287,6 +323,6 @@ test('普通模式不受 onlyNewComments 查询与过滤影响', async () => {
   const entry = makeEntry(1, { filters: normalizeFilters() })
   await poll(entry, [makeItem()], { ghRun: async () => { throw new Error('普通模式不该查评论') } })
   assert.equal(entry.deferReason, 'observe')
-  assert.deepEqual(entry.seen, { 1: PUSH })
-  assert.equal(entry.cursor, PUSH)
+  assert.ok(entry.obs['issue:1'].observedRound)
+  assert.match(entry.obs['issue:1'].cursor, /^h:/)
 })

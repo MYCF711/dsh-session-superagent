@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-21 —— 水位 v2 与最小交付房间
+
+### Breaking
+
+- 生产轮询删除 v1 路径及 `./watch` 的 10 个旧导出：`partitionItems`、`splitFresh`、`recordReported`、`advanceSeen`、`pushAbsorbed`、`newestUpdatedAt`、`pruneSeen`、`recordPendingWake`、`clearPending`、`pendingRetry`，以及 `./pr-watch` 的 `pruneSeen` / `advanceSeen`。旧算法仅保留在测试夹具用于迁移对照。状态自动迁移到 `obs`，调用方必须改用 v2 端口。
+
+### Added
+
+- **水位 v2 状态房与最小交付房间设计**：新增 `lib/rooms/watermark-state.js`，以条目级 `obs`、单调 `round`、行级 LWW 和 v1 迁移表达交付/处置；普通观察不推进未交付条目的基线，ack 只写本行，旧快照不能回滚处置。含 11 条状态/迁移/随机不变式测试。新增 `lib/rooms/watermark-decision.js`，以 11 条纯函数测试固定 fresh/retry/unchanged/handled/capped 和未列条目批次语义；ack 抑制、retry 派生、限额延迟三组变异均会失败。新增 `lib/rooms/data-provider.js`，以四个必需针脚和 comments/ack 可选针脚统一 GitHub/Gitee/fake provider，缺能力显式报错，10 条契约测试共用同一 conformance suite。新增 `lib/rooms/delivery.js`，7 条测试固定明确回执、部分交付、失败/忙不提交，以及 ack 必须携带处置后 cursor。新增 `lib/rooms/scheduler.js`，9 条假定时器测试覆盖退避/恢复/立即/NO_POLL/inFlight，恢复不撤 boot 与不启动 interval 两组变异均红。新增 `lib/rooms/projection.js`，6 条测试固定面板/工具/诊断共用只读投影、状态互斥分区、v1 兼容与冻结输出。真实轮询已接入 v2：`readState`/写盘迁移旧 watcher，issue 与 PR 以 `obs` 为新鲜度事实源，成功回执只提交正文条目，未列条目下轮继续交付；`watch_ack`/`watch_pr_ack` 只写本行，`watch_status` 复用冻结投影。旧字段仅作迁移输入或 obs 的派生投影，不参与新鲜度决策。原生 v2 与历史 #131 两轮回归、PR 评论 11/12 两轮回归均通过；`check-rooms` 已接进 preflight。
+- **最终接线与净减**：`watch_ack` 复用 provider 的写后重读 ack；状态写盘使用跨进程单写者锁，Windows `EPERM` 有界重试且 `writeError` 可见；PR `seenComments` 由 obs 派生。运行库从 8746 行净减至 8692 行（-54），运行时依赖不增加；100 条目 × 1000 次决策中位数 v1 0.0193ms、v2 0.0040ms。
+
 ### Fixed
 
 - **批次里没列出的条目被全局水位永久吞掉**（2026-11-20 真机）。`batchLimit` 只把前 N 条铺进唤醒正文，
