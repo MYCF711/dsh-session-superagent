@@ -6,7 +6,7 @@
 
 ### Added
 
-- **水位 v2 状态房与最小交付房间设计**：新增 `lib/rooms/watermark-state.js`，以条目级 `obs`、单调 `round`、行级 LWW 和 v1 迁移表达交付/处置；普通观察不推进未交付条目的基线，ack 只写本行，旧快照不能回滚处置。含 11 条状态/迁移/随机不变式测试；轮询接入随后续房间逐房验收，不在本条提前声明切换。
+- **水位 v2 状态房与最小交付房间设计**：新增 `lib/rooms/watermark-state.js`，以条目级 `obs`、单调 `round`、行级 LWW 和 v1 迁移表达交付/处置；普通观察不推进未交付条目的基线，ack 只写本行，旧快照不能回滚处置。含 11 条状态/迁移/随机不变式测试。新增 `lib/rooms/watermark-decision.js`，以 11 条纯函数测试固定 fresh/retry/unchanged/handled/capped 和未列条目批次语义；ack 抑制、retry 派生、限额延迟三组变异均会失败。轮询接入随后续房间逐房验收，不在本条提前声明切换。
 
 ### Fixed
 
