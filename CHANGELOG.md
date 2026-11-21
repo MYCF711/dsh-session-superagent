@@ -6,7 +6,7 @@
 
 ### Added
 
-- **水位 v2 状态房与最小交付房间设计**：新增 `lib/rooms/watermark-state.js`，以条目级 `obs`、单调 `round`、行级 LWW 和 v1 迁移表达交付/处置；普通观察不推进未交付条目的基线，ack 只写本行，旧快照不能回滚处置。含 11 条状态/迁移/随机不变式测试。新增 `lib/rooms/watermark-decision.js`，以 11 条纯函数测试固定 fresh/retry/unchanged/handled/capped 和未列条目批次语义；ack 抑制、retry 派生、限额延迟三组变异均会失败。新增 `lib/rooms/data-provider.js`，以四个必需针脚和 comments/ack 可选针脚统一 GitHub/Gitee/fake provider，缺能力显式报错，10 条契约测试共用同一 conformance suite。新增 `lib/rooms/delivery.js`，7 条测试固定明确回执、部分交付、失败/忙不提交，以及 ack 必须携带处置后 cursor。轮询接入随后续房间逐房验收，不在本条提前声明切换。
+- **水位 v2 状态房与最小交付房间设计**：新增 `lib/rooms/watermark-state.js`，以条目级 `obs`、单调 `round`、行级 LWW 和 v1 迁移表达交付/处置；普通观察不推进未交付条目的基线，ack 只写本行，旧快照不能回滚处置。含 11 条状态/迁移/随机不变式测试。新增 `lib/rooms/watermark-decision.js`，以 11 条纯函数测试固定 fresh/retry/unchanged/handled/capped 和未列条目批次语义；ack 抑制、retry 派生、限额延迟三组变异均会失败。新增 `lib/rooms/data-provider.js`，以四个必需针脚和 comments/ack 可选针脚统一 GitHub/Gitee/fake provider，缺能力显式报错，10 条契约测试共用同一 conformance suite。新增 `lib/rooms/delivery.js`，7 条测试固定明确回执、部分交付、失败/忙不提交，以及 ack 必须携带处置后 cursor。新增 `lib/rooms/scheduler.js`，9 条假定时器测试覆盖退避/恢复/立即/NO_POLL/inFlight，恢复不撤 boot 与不启动 interval 两组变异均红。轮询接入随后续房间逐房验收，不在本条提前声明切换。
 
 ### Fixed
 
