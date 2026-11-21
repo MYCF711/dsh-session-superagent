@@ -2301,7 +2301,7 @@ test('pollPrOnce 仅观察模式不推进水位', async () => {
   })
 })
 
-test('pollPrOnce 超过 10 条评论时截断消息但水位推进到最后一条', async () => {
+test('pollPrOnce 超过 10 条评论时截断消息，水位只推到「真正展开的最后一条」', async () => {
   await withPrState(async () => {
     const mod = await prModule('truncate')
     const wake = fakeWake({ ok: true })
@@ -2311,7 +2311,12 @@ test('pollPrOnce 超过 10 条评论时截断消息但水位推进到最后一�
     const text = wake.calls[0].text
     assert.equal(text.split('评论者:').length - 1, 10, '一条消息最多列 10 条评论')
     assert.match(text, /还有 2 条/, '其余要给出条数，不能静默丢掉')
-    assert.deepEqual(entry.seenComments, { 7: 12 }, '水位推进到最新一条')
+    assert.deepEqual(entry.seenComments, { 7: 10 }, '水位只推到展开的第 10 条：没展开的 11/12 不能被判成已读')
+
+    // 第二轮：上一轮没展开的两条必须重报 —— PR 守没有 pending 兜底，水位推过头就是永久静默。
+    await mod.__test.pollPrOnce({}, entry, 300_000, null, { ...prDeps([{ number: 7, comments }]), wake })
+    assert.equal(wake.calls.length, 2, '没展开的评论下一轮必须重报')
+    assert.deepEqual(entry.seenComments, { 7: 12 }, '第二轮把 11/12 展开后水位才到 12')
   })
 })
 
@@ -2453,7 +2458,7 @@ test('pollPrOnce 单 PR 评论超过 10 条时截断消息但水位推进到最�
     const text = wake.calls[0].text
     assert.equal(text.split('评论者:').length - 1, 10, '一条消息最多列 10 条评论')
     assert.match(text, /还有 2 条/, '其余要给出条数，不能静默丢掉')
-    assert.deepEqual(entry.seenComments, { 7: 12 }, '水位推进到最新一条')
+    assert.deepEqual(entry.seenComments, { 7: 10 }, '降序输入也要先按 id 升序排、再只推到展开的第 10 条')
   })
 })
 
@@ -3066,7 +3071,7 @@ test('issue #54：同 repo 两会话只返回并推进 currentInitiator=A 的 ac
   assert.equal(out.label, 'A:done', '返回标签必须来自 A，不得来自同 repo 的 B')
   const afterA = after.watchers[a.id]
   assert.equal(afterA.seen['54'], out.at, 'A 的 seen 必须前进到本次 ack 时间')
-  assert.equal(afterA.cursor, out.at, 'A 的 cursor 必须前进到本次 ack 时间')
+  assert.equal(afterA.cursor, '2026-01-01T00:00:00.000Z', 'ack 是单条动作：只推 seen，不抬全仓库共享的 cursor（否则同批没列出的条目会被吞）')
   assert.deepEqual(afterA.lastAcked, { numbers: ['54'], label: 'A:done', at: out.at })
   assert.deepEqual(after.watchers[b.id], before.watchers[b.id], 'B 的 seen/cursor/lastAcked 等全部字段必须原样不变')
 })
