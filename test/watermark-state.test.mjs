@@ -102,6 +102,24 @@ test('状态房：同轮冲突仍保留 handle，且 delivered/handled 各自单
   assert.equal(merged.obs['issue:7'].cursor, 'ack')
 })
 
+test('状态房：同 round 两个 deliver 合并后行 cursor 与 delivered 一致', () => {
+  const base = observe(createWatermarkState(), 'issue:7', 'base', { round: 1 })
+  const left = deliver(base, 'issue:7', 'left', { round: 2, at: '2026-11-21T00:20:00Z' })
+  const right = deliver(base, 'issue:7', 'right', { round: 2, at: '2026-11-21T00:10:00Z' })
+  const merged = mergeWatermarkStates(left, right)
+  assert.equal(merged.obs['issue:7'].cursor, merged.obs['issue:7'].delivered.cursor)
+})
+
+test('状态房：同轮 deliver 与 legacy observe 合并后不得同时 undelivered', async () => {
+  const { migrateV1Watermark } = await import('../lib/rooms/watermark-state.js')
+  const legacy = migrateV1Watermark({ kind: 'issue', seen: { 7: 'old' }, pending: { 7: { tries: 0 } } })
+  const deliveredState = deliver(legacy, 'issue:7', 'h:a', { round: 2 })
+  const observedState = observe(legacy, 'issue:7', 'h:a', { round: 2 })
+  const merged = mergeWatermarkStates(deliveredState, observedState)
+  assert.ok(merged.obs['issue:7'].delivered)
+  assert.equal(merged.obs['issue:7'].undelivered, undefined)
+})
+
 test('状态房：v1 seen/pending/acked 迁移保留含义，幂等且不改输入', () => {
   const legacy = {
     repo: 'o/r', kind: 'issue',

@@ -44,6 +44,7 @@ const WHY = {
   'npm pack 内容': ['包内容泄漏或漏文件（发布后才发现的经典事故）', 'README 安装节'],
   '离线挂载冒烟': ['apply 抛错 / 挂载后路由缺失', 'KB `offline-mount-smoke.md`'],
   '文档链接': ['文档互相引用的断链', 'KB `identifier-drift.md`'],
+  '房间依赖边界': ['跨房读写内部状态，让水位/调度/交付重新耦合成补丁堆', 'docs/设计-水位v2与房间划分.md'],
   '并发隔离': ['两个会话守同一仓库时互相踩', 'KB `concurrent-isolation.md`'],
   '隔离链路': ['worktree 回收不掉、主工作区被污染', 'KB `verify-isolation-chain.md`'],
   '文案快照': ['客户会读到的文字被悄悄改坏', 'KB `copy-snapshot.md`'],

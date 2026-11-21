@@ -107,6 +107,26 @@ test('决策房：非法输入返回空决策，不让单条坏数据打挂整�
   assert.equal(out.invalid.length, 2)
 })
 
+test('决策房：v1 tries=0 的未列条目迁移后仍 fresh，不进入重试冷却', async () => {
+  const { migrateV1Watermark } = await import('../lib/rooms/watermark-state.js')
+  let state = migrateV1Watermark({
+    kind: 'issue', seen: { 131: 'old' }, pending: { 131: { at: AT, tries: 0 } },
+  })
+  state = observe(state, 'issue:131', 'h:current', { round: state.round + 1 })
+  const out = decideWatermark({ items: [rec('issue:131', 'h:current')], obs: state.obs, now: NOW })
+  assert.deepEqual(keys(out.fresh), ['issue:131'])
+  assert.equal(out.waiting.length, 0)
+})
+
+test('决策房：force observe 仅消费观察，不伪装交付，后续新内容仍 fresh', () => {
+  let state = observe(createWatermarkState(), 'issue:1', 'a', { round: 1, force: true })
+  let out = decideWatermark({ items: [rec('issue:1', 'a')], obs: state.obs, now: NOW })
+  assert.deepEqual(keys(out.unchanged), ['issue:1'])
+  assert.equal(state.obs['issue:1'].delivered, null)
+  out = decideWatermark({ items: [rec('issue:1', 'b')], obs: state.obs, now: NOW })
+  assert.deepEqual(keys(out.fresh), ['issue:1'])
+})
+
 test('决策房：支持数据源注入 cursor 比较器', () => {
   const state = observe(createWatermarkState(), 'issue:1', 7, { round: 1 })
   const out = decideWatermark({

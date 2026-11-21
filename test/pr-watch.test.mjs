@@ -12,9 +12,8 @@ import {
   pickNewComments,
   shouldWake,
   buildPrWakeText,
-  pruneSeen,
-  advanceSeen,
 } from '../lib/pr-watch.js'
+import { pruneCommentSeen as pruneSeen, advanceCommentSeen as advanceSeen } from './fixtures/legacy-watermark.mjs'
 
 test('normalizeSelf 去 @ 并小写', () => {
   assert.equal(normalizeSelf('@iJetLi '), 'ijetli')

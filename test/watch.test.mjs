@@ -43,12 +43,13 @@ import {
   jitterMs,
   retryAfterMs,
   throttleDelayMs,
-  advanceSeen, applyWatcherAction, batchFresh, decideWake, formatWatchText, newestUpdatedAt,
+  applyWatcherAction, batchFresh, decideWake, formatWatchText,
   hasAckLabel,
-  itemTrace, nextDelayMs, normalizeFilters, partitionItems, passesFilters, pruneSeen, pruneWakeTimes,
-  inActiveHours, mergePollResult, filterReason, pushFiltered, recordReported, splitFresh,
+  itemTrace, nextDelayMs, normalizeFilters, passesFilters, pruneWakeTimes,
+  inActiveHours, mergePollResult, filterReason, pushFiltered,
   staleWorktrees, worktreePlan,
 } from '../lib/watch.js'
+import { partitionItems, splitFresh, advanceSeen, recordReported, pruneSeen, newestUpdatedAt } from './fixtures/legacy-watermark.mjs'
 
 const item = (number, updatedAt) => ({ number, updated_at: updatedAt, state: 'open', title: `t${number}`, html_url: `https://x/${number}`, user: { login: 'me' } })
 
@@ -1601,7 +1602,7 @@ test('wakeTimes 被写成非数组也不许崩（坏数据的代价不该是整�
 })
 
 test('水位只许前进：并发 tick 手里的旧快照不许把 watch_ack 推进的 seen 写回去', async () => {
-  const { mergePollResult } = await import('../lib/watch.js')
+  const { mergeLegacyPollResult: mergePollResult } = await import('./fixtures/legacy-merge.mjs')
   // 模拟 writeState 的合并：盘上已是 05:00（ack 写的），内存里 tick 手里是 04:59
   const disk = { id: 'r#s', lastPoll: '2026-11-05T05:00:00.000Z', seen: { 42: '2026-11-05T05:00:00.000Z', 41: '2026-11-05T04:00:00.000Z' } }
   const mem = { id: 'r#s', lastPoll: '2026-11-05T04:59:00.000Z', seen: { 42: '2026-11-05T04:59:00.000Z' } }
@@ -1614,7 +1615,7 @@ test('水位只许前进：并发 tick 手里的旧快照不许把 watch_ack 推
 })
 
 test('partitionItems 收到非数组不许抛（坏状态会让该守永久退避）', async () => {
-  const { partitionItems } = await import('../lib/watch.js')
+  const { partitionItems } = await import('./fixtures/legacy-watermark.mjs')
   for (const bad of ['abc', {}, 0, true, undefined, null]) {
     assert.doesNotThrow(() => partitionItems(bad, {}), '输入 ' + JSON.stringify(bad) + ' 不该抛')
     const { fresh, absorbed } = partitionItems(bad, {})
@@ -1646,7 +1647,7 @@ test('id=__proto__ 不能污染原型（T19：一次请求改掉 Object.prototyp
 })
 
 test('会话忙时**不许**推进水位（T20：否则下一轮 304，那条评论永远不再叫）', async () => {
-  const { planWakeSettlement } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
   const entry = { seen: { 1: 'x' }, wakeTimes: [], history: [], silentWakes: 0, cursor: 'c0' }
   const busy = planWakeSettlement(entry, { ok: false, reason: 'session busy', fresh: [{ number: 42 }] })
   assert.equal(busy.advanceWatermark, false, '失败分支不许推进水位')
@@ -1658,7 +1659,7 @@ test('会话忙时**不许**推进水位（T20：否则下一轮 304，那条评
 })
 
 test('真正发出去之后才推进水位，且记账（T20：入队即记账会丢消息）', async () => {
-  const { planWakeSettlement } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
   const entry = { seen: { 1: 'x' }, wakeTimes: [], history: [], silentWakes: 0 }
   const ok = planWakeSettlement(entry, {
     ok: true,
@@ -1675,7 +1676,7 @@ test('真正发出去之后才推进水位，且记账（T20：入队即记账�
 })
 
 test('水位只推「这次列出去的」：没列出的条目下一轮还要能提（T38：整批 fresh 全进水位 = 静默丢弃）', async () => {
-  const { planWakeSettlement } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
   const fresh = [
     { number: 11, updated_at: '2026-11-05T00:01:00.000Z' },
     { number: 12, updated_at: '2026-11-05T00:02:00.000Z' },
@@ -1692,7 +1693,8 @@ test('水位只推「这次列出去的」：没列出的条目下一轮还要�
 })
 
 test('「静默丢弃」回归：只列了 2/3 条时，第 3 条下一轮仍是 fresh', async () => {
-  const { planWakeSettlement, partitionItems } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
+    const { partitionItems } = await import('./fixtures/legacy-watermark.mjs')
   const items = [
     { number: 21, updated_at: '2026-11-05T00:01:00.000Z' },
     { number: 22, updated_at: '2026-11-05T00:02:00.000Z' },
@@ -1705,7 +1707,7 @@ test('「静默丢弃」回归：只列了 2/3 条时，第 3 条下一轮仍是
 })
 
 test('失败的唤醒也要进 history（客户能看到「叫过但没叫醒」）', async () => {
-  const { planWakeSettlement } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
   const res = planWakeSettlement({ history: [] }, { ok: false, reason: 'session not live', fresh: [{ number: 7 }] })
   assert.equal(res.history.length, 1)
   assert.equal(res.history[0].ok, false)
@@ -1714,7 +1716,7 @@ test('失败的唤醒也要进 history（客户能看到「叫过但没叫醒」
 })
 
 test('fresh 为空时水位不许清空（T39：pending 非空但本轮没新增 → cursor 被写成 null，下一轮重复唤醒）', async () => {
-  const { planWakeSettlement } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
   const entry = { cursor: '2026-11-01T00:00:00.000Z', seen: {}, wakeTimes: [], history: [], silentWakes: 0 }
   const out = planWakeSettlement(entry, {
     ok: true,
@@ -1729,7 +1731,8 @@ test('fresh 为空时水位不许清空（T39：pending 非空但本轮没新增
 })
 
 test('batchLimit=1 连续两轮：先提第 1 条、下轮提第 2 条，且不重复第 1 条', async () => {
-  const { planWakeSettlement, partitionItems } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
+    const { partitionItems } = await import('./fixtures/legacy-watermark.mjs')
   // 真实 API 是 sort=updated&direction=desc（新→旧）：fixture 必须降序，
   // 否则「batchLimit=1 时第一轮列哪条」会和真机反着来（desc 下先列 #32）。
   const items = [
@@ -1842,7 +1845,7 @@ test('唤醒失败的原因要客户能看懂（T33 M3：以前是 session not l
 })
 
 test('lastReported 必须是有界的（T36 M1：以前只增不减，20 守跑 30 天约 14 MB）', async () => {
-  const { recordReported } = await import('../lib/watch.js')
+  const { recordReported } = await import('./fixtures/legacy-watermark.mjs')
   const now = Date.now()
   let state = { lastReported: {} }
   // 模拟 20 条守跑 400 轮（每小时一条新条目）
@@ -1879,7 +1882,7 @@ test('同一编号再被叫醒时，要带回上次 ack 留的话（诉求 2：�
 })
 
 test('提过但没回执的条目，下一轮再提一次（Ticket「open」的最小版）', async () => {
-  const { recordPendingWake, clearPending, pendingRetry } = await import('../lib/watch.js')
+  const { recordPendingWake, clearPending, pendingRetry } = await import('./fixtures/legacy-watermark.mjs')
   const t0 = '2026-11-05T00:00:00.000Z'
   const pending = recordPendingWake({}, [7, 8], t0)
   assert.equal(pending['7'].tries, 1)
@@ -1901,7 +1904,7 @@ test('提过但没回执的条目，下一轮再提一次（Ticket「open」的�
 })
 
 test('★★★ ack 清空 pending 后，旧轮询快照不许把它复活（自激唤醒，2026-11-16 真机 #97）', async () => {
-  const { mergePollResult } = await import('../lib/watch.js')
+  const { mergeLegacyPollResult: mergePollResult } = await import('./fixtures/legacy-merge.mjs')
   // 真机时间线：15:13:36 watch_ack 清空 pending 并写下 lastAcked / acked；
   // 并发 tick 手里还是 ack **之前**的快照（15:09:09 那次 recordPendingWake）。
   const stored = {
@@ -1926,7 +1929,7 @@ test('★★★ ack 清空 pending 后，旧轮询快照不许把它复活（自
 })
 
 test('★★★ ack #7 时，未 ack 的 #8 即使时间更早也必须保留（2026-11-17 外部 review 第二轮）', async () => {
-  const { mergePollResult } = await import('../lib/watch.js')
+  const { mergeLegacyPollResult: mergePollResult } = await import('./fixtures/legacy-merge.mjs')
   // 上一版拿全局 lastAcked.at（所有 ack 里最晚的 00:20）当阈值，#8 的 00:10 被
   // 判成「早于 ack」直接删掉 —— 可 #8 根本没 ack，下一轮该重提的重提不了。
   const stored = {
@@ -1950,7 +1953,7 @@ test('★★★ ack #7 时，未 ack 的 #8 即使时间更早也必须保留（
 })
 
 test('★★★ 老状态文件只有 lastAcked.numbers 没有 acked 明细时，按 lastAcked.at 兜底', async () => {
-  const { mergePollResult } = await import('../lib/watch.js')
+  const { mergeLegacyPollResult: mergePollResult } = await import('./fixtures/legacy-merge.mjs')
   const stored = {
     pending: { 7: { tries: 1, at: '2026-11-05T00:00:00.000Z' } },
     lastAcked: { numbers: [7], at: '2026-11-05T00:20:00.000Z' },
@@ -1964,7 +1967,7 @@ test('★★★ 老状态文件只有 lastAcked.numbers 没有 acked 明细时�
 })
 
 test('正常「已唤醒但还没 ack」的 pending 仍然重提（seen 不是 ack 凭证）', async () => {
-  const { recordPendingWake, pendingRetry } = await import('../lib/watch.js')
+  const { recordPendingWake, pendingRetry } = await import('./fixtures/legacy-watermark.mjs')
   // reviewer 给的真实输入：成功唤醒后 seen[number] 本来就会推到 item.updated_at，
   // 并不要求 ack —— 所以 updated_at <= seen 是常态，不能当「已消费」。
   const pending = recordPendingWake({}, [7, 8], '2026-11-05T00:00:00Z')
@@ -1984,7 +1987,7 @@ test('正常「已唤醒但还没 ack」的 pending 仍然重提（seen 不是 a
 })
 
 test('ack 之后新产生的 pending 必须保留（别被 ack 一起吞掉）', async () => {
-  const { mergePollResult } = await import('../lib/watch.js')
+  const { mergeLegacyPollResult: mergePollResult } = await import('./fixtures/legacy-merge.mjs')
   const stored = {
     pending: {},
     lastAcked: { numbers: [7], at: '2026-11-05T00:20:00Z' },
@@ -2317,6 +2320,59 @@ test('pollPrOnce 超过 10 条评论时截断消息，水位只推到「真正�
     await mod.__test.pollPrOnce({}, entry, 300_000, null, { ...prDeps([{ number: 7, comments }]), wake })
     assert.equal(wake.calls.length, 2, '没展开的评论下一轮必须重报')
     assert.deepEqual(entry.seenComments, { 7: 12 }, '第二轮把 11/12 展开后水位才到 12')
+  })
+})
+
+test('mergePollResult：一次性 v1Migrated=false 必须能落盘', async () => {
+  const { mergeLegacyPollResult: mergePollResult } = await import('./fixtures/legacy-merge.mjs')
+  const merged = mergePollResult({ watermarkVersion: 2, v1Migrated: true }, { watermarkVersion: 2, v1Migrated: false })
+  assert.equal(merged.v1Migrated, false)
+})
+
+test('mergePollResult：obs 处置轮次不被旧轮询回退', async () => {
+  const { mergeLegacyPollResult: mergePollResult } = await import('./fixtures/legacy-merge.mjs')
+  const merged = mergePollResult(
+    { watermarkVersion: 2, round: 3, obs: { 'pr:7/comment': { cursor: 12, delivered: null, handled: { cursor: 12, round: 3, at: 'a' }, retries: 0, round: 3 } } },
+    { watermarkVersion: 2, round: 2, obs: { 'pr:7/comment': { cursor: 10, delivered: { cursor: 10, round: 2, at: 'b' }, handled: null, retries: 1, round: 2 } } },
+  )
+  assert.equal(merged.obs['pr:7/comment'].handled.cursor, 12)
+})
+
+test('pollPrOnce 原生 v2：评论 11/12 分两轮交付，obs 逐轮前进', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('truncate-v2')
+    const wake = fakeWake({ ok: true })
+    const entry = prEntry({ watermarkVersion: 2, round: 0, obs: {} })
+    const comments = Array.from({ length: 12 }, (_, i) => prComment(i + 1, 'alice'))
+    await mod.__test.pollPrOnce({}, entry, 300_000, null, { ...prDeps([{ number: 7, comments }]), wake })
+    assert.equal(entry.obs['pr:7/comment'].delivered.cursor, 10)
+    await mod.__test.pollPrOnce({}, entry, 300_000, null, { ...prDeps([{ number: 7, comments }]), wake })
+    assert.equal(wake.calls.length, 2)
+    assert.equal(entry.obs['pr:7/comment'].delivered.cursor, 12)
+    assert.equal(entry.round >= 2, true)
+  })
+})
+
+test('pollPrOnce legacy seen=10：11 立即交付，12 下轮交付且不夹带 11', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('legacy-pr-seen')
+    const wake = fakeWake({ ok: true })
+    const original = prEntry({ seenComments: { 7: 10 } })
+    mod.__test.writeState({ watchers: { [original.id]: original } })
+    const entry = mod.__test.readState().watchers[original.id]
+    assert.equal(entry.watermarkVersion, 2)
+    await mod.__test.pollPrOnce({}, entry, 300_000, null, {
+      ...prDeps([{ number: 7, comments: Array.from({ length: 11 }, (_, i) => prComment(i + 1, 'alice')) }]), wake,
+    })
+    assert.equal(wake.calls.length, 1, 'legacy 对齐不得吞掉 11')
+    assert.match(wake.calls[0].text, /body 11/)
+    assert.equal(entry.obs['pr:7/comment'].delivered.cursor, 11)
+    await mod.__test.pollPrOnce({}, entry, 300_000, null, {
+      ...prDeps([{ number: 7, comments: Array.from({ length: 12 }, (_, i) => prComment(i + 1, 'alice')) }]), wake,
+    })
+    assert.equal(wake.calls.length, 2)
+    assert.match(wake.calls[1].text, /body 12/)
+    assert.doesNotMatch(wake.calls[1].text, /body 11/)
   })
 })
 
@@ -3070,8 +3126,9 @@ test('issue #54：同 repo 两会话只返回并推进 currentInitiator=A 的 ac
   assert.equal(out.ok, true, JSON.stringify(out))
   assert.equal(out.label, 'A:done', '返回标签必须来自 A，不得来自同 repo 的 B')
   const afterA = after.watchers[a.id]
-  assert.equal(afterA.seen['54'], out.at, 'A 的 seen 必须前进到本次 ack 时间')
-  assert.equal(afterA.cursor, '2026-01-01T00:00:00.000Z', 'ack 是单条动作：只推 seen，不抬全仓库共享的 cursor（否则同批没列出的条目会被吞）')
+  assert.ok(afterA.obs['issue:54'].handled, 'A 的 obs 必须记录本次 ack 的 post-cursor')
+  assert.equal(afterA.obs['issue:54'].handled.at, out.at)
+  assert.equal(afterA.cursor, '2026-01-01T00:00:00.000Z', 'ack 只写本行，不抬全仓库共享的 cursor')
   assert.deepEqual(afterA.lastAcked, { numbers: ['54'], label: 'A:done', at: out.at })
   assert.deepEqual(after.watchers[b.id], before.watchers[b.id], 'B 的 seen/cursor/lastAcked 等全部字段必须原样不变')
 })

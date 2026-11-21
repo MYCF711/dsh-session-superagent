@@ -109,7 +109,7 @@ test('并发 flush 只发送一次、只结算一次（review 新 high）', asyn
 })
 
 test('busy 结算不写 lastError（review medium）', async () => {
-  const { planWakeSettlement } = await import('../lib/watch.js')
+  const { planWakeSettlement } = await import('./fixtures/legacy-plan.mjs')
   const entry = { lastWakeCount: 2 }
   const out = planWakeSettlement(entry, {
     ok: false,

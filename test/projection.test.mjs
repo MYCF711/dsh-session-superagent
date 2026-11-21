@@ -74,5 +74,17 @@ test('投影房：能力清单原样只读暴露，缺字段安全', () => {
   const view = projectWatcher(null, { capabilities: ['issues'] })
   assert.equal(view.repo, null)
   assert.deepEqual(view.capabilities, ['issues'])
-  assert.equal(view.candidateCount, 0)
+  assert.equal(view.candidateCount, null, '尚未拉取时计数未知，不能伪装成 0 条新动态')
+})
+
+test('投影房：显式 items=[] 才是 0 条，未传 items 是未知', () => {
+  const entry = createWatermarkState({ repo: 'o/r' })
+  const unknown = projectWatcher(entry)
+  const empty = projectWatcher(entry, { items: [] })
+  assert.equal(unknown.candidateCount, null)
+  assert.equal(unknown.freshCount, null)
+  assert.equal(unknown.retryCount, null)
+  assert.equal(empty.candidateCount, 0)
+  assert.equal(empty.freshCount, 0)
+  assert.equal(empty.retryCount, 0)
 })

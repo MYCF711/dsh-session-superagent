@@ -57,6 +57,7 @@ test('数据源房：语义 cursor 稳定、排除 ack 标签、真实内容变�
   assert.equal(issueCursor(base, { ackLabel: '主理鱼:已处理' }), issueCursor(reordered, { ackLabel: '主理鱼:已处理' }))
   assert.notEqual(issueCursor(base), issueCursor({ ...base, title: 'changed' }))
   assert.notEqual(issueCursor(base), issueCursor({ ...base, comments: 2 }))
+  assert.notEqual(issueCursor(base), issueCursor({ ...base, body: 'edited' }))
 })
 
 test('数据源房：GitHub list 复用 --include/ETag，CRLF 正文解析与截断标记', async () => {
@@ -96,7 +97,7 @@ test('数据源房：Gitee list 复用现有归一，保留字符串 issue 编�
     fetchImpl: async (url) => ({
       ok: true, status: 200,
       text: async () => url.includes('/issues?')
-        ? JSON.stringify([{ number: 'IKSQJH', title: 'g', state: 'open', updated_at: '2026-01-01' }])
+        ? JSON.stringify([{ number: 'IKSQJH', title: 'g', body: 'body-g', state: 'open', updated_at: '2026-01-01' }])
         : JSON.stringify([]),
     }),
   })
@@ -104,6 +105,7 @@ test('数据源房：Gitee list 复用现有归一，保留字符串 issue 编�
   assert.equal(out.ok, true)
   assert.equal(out.items[0].number, 'IKSQJH')
   assert.equal(out.items[0].state, 'open')
+  assert.equal(out.items[0].body, 'body-g', 'Gitee 归一化不能丢掉正文语义')
   assert.equal(out.truncated, false)
   const checks = await runProviderConformance(provider)
   assert.equal(checks.every((check) => check.ok), true)
