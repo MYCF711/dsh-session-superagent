@@ -8,6 +8,7 @@
   "exports": {
     ".": "./lib/index.js",
     "./watch": "./lib/watch.js",
+    "./rooms/watermark-state": "./lib/rooms/watermark-state.js",
     "./redact": "./lib/redact.js",
     "./package.json": "./package.json",
     "./client": "./client.js",
@@ -17,6 +18,7 @@
   "files": [
     "lib/index.js",
     "lib/watch.js",
+    "lib/rooms/watermark-state.js",
     "lib/gh-format.js",
     "lib/pr-watch.js",
     "lib/redact.js",
