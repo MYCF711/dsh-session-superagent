@@ -18,7 +18,7 @@
 
 ```text
 基线        上游 main@95b5a72（水位 v2 / 1.0.0）
-工作树      dsh-sa-modular-refactor；task/modular-rooms；只允许独立实验仓分支，不推主仓库
+工作树      dsh-sa-modular-refactor；task/modular-rooms；已推独立实验仓，不推主仓库
 候选版本    1.1.0；20 个最小房间 + modular-runtime + modular-outbox-host
 默认行为    旧 watcher 仍 inline；只有显式 executionMode=worker 才创建独立 worker Session
 ```
@@ -55,5 +55,5 @@
 ## 三、下一步
 
 1. UI 已确认；只允许独立实验仓 `task/modular-rooms`，禁止推主仓库。
-2. 推送后核对远端提交与 CI；不发布 tag / Release / npm。
+2. 远端分支已与本地提交核对；CI 仅 main push / PR 触发，本分支无 CI 运行，不伪报通过。后续若开 PR 再验 Node 22/24；不发布 tag / Release / npm。
 3. 有可写 Gitee 测试 issue/PR 后，补真实 ack + 写后重读并清理，再关闭该未验项。
