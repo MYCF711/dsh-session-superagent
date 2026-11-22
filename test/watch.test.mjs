@@ -47,7 +47,7 @@ import {
   hasAckLabel,
   itemTrace, nextDelayMs, normalizeFilters, passesFilters, pruneWakeTimes,
   inActiveHours, mergePollResult, filterReason, pushFiltered,
-  staleWorktrees, worktreePlan,
+  staleWorktrees, worktreePlan, pollHealth,
 } from '../lib/watch.js'
 import { partitionItems, splitFresh, advanceSeen, recordReported, pruneSeen, newestUpdatedAt } from './fixtures/legacy-watermark.mjs'
 
@@ -3533,4 +3533,47 @@ test('pollPrOnce：检查时空闲、发送前 child 启动 → 记 busy 不退�
     if (previousWindow === undefined) delete process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS
     else process.env.DSH_SUPERAGENT_WAKE_WINDOW_MS = previousWindow
   }
+})
+
+// ─── pollHealth：把「轮询停了」变成可见状态（真机事故 2026-11-22）─────────────
+//
+// 现场：宿主重启后启动挂载失败，`lastPoll` 停在 24 小时前，而面板照旧显示
+// 「运行中 · 正常」—— 因为 lastError 是 null（根本没尝试过）。客户唯一能看到的
+// 是「轮询 23 小时前」这种绝对时间，看不出它已经远超预期间隔。
+// 这个纯函数给面板/状态视图一个统一的判据，避免两处各写一套阈值。
+
+test('pollHealth：重启后从未轮询 → 判为 boot-miss', () => {
+  const now = Date.parse('2026-11-22T16:00:00Z')
+  const bootAt = now - 24 * 3600 * 1000 // 进程 24 小时前起
+  const health = pollHealth({ lastPoll: '2026-11-21T15:09:34.424Z', intervalSec: 300, enabled: true }, { now, bootAt })
+  assert.equal(health.state, 'boot-miss')
+})
+
+test('pollHealth：刚刚轮询过 → ok；超过预期间隔但仍在启动豁免期内 → grace', () => {
+  const now = Date.parse('2026-11-22T16:00:00Z')
+  const bootAt = now - 60 * 1000 // 进程刚起 1 分钟
+  const ok = pollHealth({ lastPoll: new Date(now - 60 * 1000).toISOString(), intervalSec: 300, enabled: true }, { now, bootAt })
+  assert.equal(ok.state, 'ok')
+
+  // lastPoll 在进程启动之前，但进程才起 1 分钟（< max(3×interval, 5min)）：这是「还没轮到」，不是故障
+  const grace = pollHealth({ lastPoll: new Date(now - 3600 * 1000).toISOString(), intervalSec: 300, enabled: true }, { now, bootAt })
+  assert.equal(grace.state, 'grace')
+})
+
+test('pollHealth：进程跑了很久但轮询停在半路 → 判为 stalled', () => {
+  const now = Date.parse('2026-11-22T16:00:00Z')
+  const bootAt = now - 24 * 3600 * 1000
+  const health = pollHealth({ lastPoll: new Date(now - 2 * 3600 * 1000).toISOString(), intervalSec: 300, enabled: true }, { now, bootAt })
+  assert.equal(health.state, 'stalled')
+})
+
+test('pollHealth：已暂停 / 从未轮询 / 时间不可解析时不冒充故障', () => {
+  const now = Date.parse('2026-11-22T16:00:00Z')
+  const bootAt = now - 24 * 3600 * 1000
+  assert.equal(pollHealth({ lastPoll: null, intervalSec: 300, enabled: true }, { now, bootAt }).state, 'never')
+  // 暂停 = 不再产生新事实，不能拿旧 lastPoll 报故障（KB paused-means-no-new-facts）
+  const paused = pollHealth({ lastPoll: '2026-11-21T15:09:34.424Z', intervalSec: 300, enabled: false }, { now, bootAt })
+  assert.equal(paused.state, 'paused')
+  const bad = pollHealth({ lastPoll: 'not-a-date', intervalSec: 300, enabled: true }, { now, bootAt })
+  assert.equal(bad.state, 'never', '时间不可解析时不能判成故障')
 })

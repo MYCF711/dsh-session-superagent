@@ -37,6 +37,19 @@ const sameSet = (actual, expected) => {
   return a.length === b.length && a.every((item, index) => item === b[index])
 }
 
+/**
+ * `optional` 字段只在特定状态下出现（例：`poll` 只在轮询停摆时给）。
+ *
+ * 契约仍然有效 —— 只是判据从「集合相等」变成「实到 ⊆ 在册，且 stable/experimental 必须实到」：
+ * 可选字段出现时必须叫在册的那个名字，没出现也不算违约。否则一个只在异常态才有的字段
+ * 要么逼着调用方永远塞假数据，要么只能干脆不登记（那才是契约真正腐烂的方式）。
+ */
+const sameSetWithOptional = (actual, expected, manifest = {}) => {
+  const optional = new Set(Object.entries(manifest).filter(([, level]) => level === 'optional').map(([key]) => key))
+  const required = Object.keys(manifest).filter((key) => !optional.has(key))
+  return sameSet(actual, [...required, ...optional].filter((key) => actual.includes(key)))
+}
+
 test('结构化输出的每个字段都在稳定性清单里（新增字段必须登记）', async () => {
   const { tools, mod: mod0 } = await loadTools()
   const byName = (name) => tools.find((tool) => tool.name === name)
@@ -63,7 +76,7 @@ test('结构化输出的每个字段都在稳定性清单里（新增字段必�
   const ack = JSON.parse(await byName('watch_ack').execute({ repo: 'o/stab', number: 1, format: 'json' }))
 
   assert.ok(sameSet(Object.keys(status), Object.keys(manifest.watch_status.root)), 'watch_status 根字段变了：' + Object.keys(status).join(','))
-  assert.ok(sameSet(Object.keys(status.watchers[0]), Object.keys(manifest.watch_status.watcher)), 'watcher 字段变了：' + Object.keys(status.watchers[0]).join(','))
+  assert.ok(sameSetWithOptional(Object.keys(status.watchers[0]), Object.keys(manifest.watch_status.watcher), manifest.watch_status.watcher), 'watcher 字段变了：' + Object.keys(status.watchers[0]).join(','))
   assert.ok(sameSet(Object.keys(status.session), Object.keys(manifest.watch_status.session)), 'session 字段变了：' + Object.keys(status.session).join(','))
   assert.ok(sameSet(Object.keys(doctor), Object.keys(manifest.watch_doctor.root)), 'watch_doctor 根字段变了')
   assert.ok(sameSet(Object.keys(doctor.checks[0]), Object.keys(manifest.watch_doctor.check)), 'check 字段变了')
@@ -95,6 +108,7 @@ test('清单里不能有已经不存在的字段（避免清单自己腐烂）',
   const declared = Object.entries(manifest.watch_status.watcher).filter(([, level]) => level === 'stable').length
   assert.ok(declared > 0, '至少要有一个 stable 字段')
   for (const [, level] of Object.entries(manifest.watch_status.watcher)) {
-    assert.ok(level === 'stable' || level === 'experimental', '级别只能是 stable / experimental')
+    // optional = 只在特定状态出现（出现时必须叫这个名字，不出现不算违约）
+    assert.ok(level === 'stable' || level === 'experimental' || level === 'optional', '级别只能是 stable / experimental / optional')
   }
 })

@@ -164,7 +164,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-1233 项单测、44 项 preflight（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、11 项 UI 全绿（1.0.0）。
+1239 项单测、44 项 preflight（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、11 项 UI 全绿（1.0.0）。
 
 ### 贡献归属门禁
 

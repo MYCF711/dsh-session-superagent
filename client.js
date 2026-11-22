@@ -13,6 +13,10 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState } = React
 
+    // 服务端只回「哪个状态」（'boot-miss' / 'stalled'）—— /state 的 50KB 体积预算不允许传整句中文。
+    // 人话在客户端翻译：弹层摘要与状态行共用同一张表，不会说成两套话。
+    const POLL_STALE_TEXT = { 'boot-miss': '重启后没跑起来', stalled: '轮询停了' }
+
     // Issue #35：本地回退 Modal 的 portal 通道。composer dock 的祖先可能带 transform / contain，
     // 那会让 position:fixed 以该祖先为包含块并被 overflow 裁掉 —— 确认层 footer 既看不见也点不到。
     // 宿主 react-dom 走 factory require；拿不到时保持内联渲染，不另造第三套 Modal。
@@ -2197,6 +2201,8 @@ window.__ModuleLoader__.load({
         const parts = [whoName(w) + whoId(w), '每 ' + (Number(w.intervalSec) || 60) + 's']
         // ageText 自己已经带「前」（「76 秒前」），别再拼一个 —— 真机上显示成「76 秒前前」
         if (w.lastPoll) parts.push(ageText(w.lastPoll))
+        // 停摆要说清是「重启后没跑起来」还是「跑着跑着丢了」，别只给一个绝对时间
+        if (w.poll && POLL_STALE_TEXT[w.poll]) parts.push(POLL_STALE_TEXT[w.poll])
         if (w.activeHours) parts.push('时段 ' + w.activeHours)
         return parts.join(' · ')
       }
@@ -3825,7 +3831,13 @@ window.__ModuleLoader__.load({
             // ack 标签决定这条是否还会被叫醒，不能只在工具参数里出现。
             h(Tag, { tone: 'quiet' }, '回执 ' + (watcher.ackLabel || ackLabelFallback(watcher, ACK_DEFAULTS))),
             watcher.queuedWakes > 0 ? h(Tag, { tone: 'warning' }, '排队 ' + watcher.queuedWakes) : null,
-            backoffText(watcher) ? h(Tag, { tone: 'warning' }, backoffText(watcher)) : null),
+            backoffText(watcher) ? h(Tag, { tone: 'warning' }, backoffText(watcher)) : null,
+            // 轮询停摆（真机事故 2026-11-22）：重启后启动挂载失败时 lastError 是 null，
+            // 只显示「轮询 23 小时前」的绝对时间看不出它早就停了。判据由服务端 pollHealth 给，
+            // 面板不自己算阈值 —— 两处各写一套必然走偏。
+            (watcher.poll && POLL_STALE_TEXT[watcher.poll])
+              ? h(Tag, { tone: 'warning' }, POLL_STALE_TEXT[watcher.poll])
+              : null),
           // 三行，各管一件事：① 是谁 ② 节律与最近结果 ③ 目标
           // 原来六段用 ' · ' 串成一行（会话 · 每 60s · 轮询 · 唤醒 · 上次唤醒 · 目标），
           // 出图时那行在浅色主题下折成两行、读起来像一堵墙。

@@ -515,7 +515,11 @@ test('/state 字段契约：client.js 引用的每个字段都必须真的回传
   assert.deepEqual(missingTop, [], '顶层缺字段：' + missingTop.join(', '))
   assert.ok(state.gh !== undefined, 'gh 必须回传')
 
-  const missingPer = [...perWatcher].filter((key) => !(key in watcher))
+  // client 引用的字段里，有些只在特定状态才出现（例：poll 只在轮询停摆时给 ——
+  // 健康态省略它是为了 /state 的体积预算，缺省即健康）。这类字段在这里放行，
+  // 由 contract-stability 的 optional 级登记守名字。
+  const OPTIONAL_PER_WATCHER = new Set(['poll'])
+  const missingPer = [...perWatcher].filter((key) => !OPTIONAL_PER_WATCHER.has(key) && !(key in watcher))
   assert.deepEqual(missingPer, [], '每条缺字段：' + missingPer.join(', '))
 
   await call('POST', '/session-superagent/watch', { action: 'delete', id: created.id })
@@ -856,12 +860,19 @@ test('watch_doctor 能发现"定时器丢了"和"隔离目录不可写"', async 
   const state = mod.__test.readState()
   const key = Object.keys(state.watchers)[0]
   state.watchers[key].lastPoll = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-  // 进程也跑了很久（否则会被判成「刚重启」，见下一条用例）
-  state.server = { ...(state.server || {}), startedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() }
-  mod.__test.writeState(state)
+  // 进程也跑了很久（否则会被判成「刚重启」，见下一条用例）。
+  // 必须连「本进程启动时刻」一起拨：doctor 以进程真实诞生时刻判重启
+  //（盘上 startedAt 在启动挂载失败时根本不刷新，2026-11-22 真机事故）。
+  const restoreBoot = mod.__test.setBootAt(Date.now() - 4 * 60 * 60 * 1000)
+  try {
+    state.server = { ...(state.server || {}), startedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() }
+    mod.__test.writeState(state)
 
-  const text = String(await doctor.execute({}))
-  assert.ok(/没轮询过/.test(text), '停滞的守要报出来：' + text.slice(0, 300))
+    const text = String(await doctor.execute({}))
+    assert.ok(/没轮询过/.test(text), '停滞的守要报出来：' + text.slice(0, 300))
+  } finally {
+    restoreBoot()
+  }
 })
 
 test('watch_trace 能说清"被冷却期吸收"，而不是三合一猜测', async () => {
@@ -1141,12 +1152,70 @@ test('刚重启不该被当成「定时器丢了」', async () => {
   assert.ok(fresh.includes('刚重启'), '刚重启要如实说明：' + fresh.slice(0, 300))
   assert.ok(!fresh.includes('定时器可能丢了'), '刚重启不该报故障')
 
-  // 进程已经跑够久（uptime 3 小时）时，同样的陈旧就要报故障
-  const state2 = mod.__test.readState()
-  state2.server = { ...(state2.server || {}), startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString() }
-  mod.__test.writeState(state2)
-  const stale = String(await doctor.execute({}))
-  assert.ok(stale.includes('没轮询过'), '跑久了还陈旧才算故障：' + stale.slice(0, 300))
+  // 进程已经跑够久（uptime 3 小时）时，同样的陈旧就要报故障。
+  // 这里必须连「本进程启动时刻」一起往后拨：doctor 现在以**进程真实诞生时刻**判重启
+  //（盘上 server.startedAt 在启动挂载失败时根本不会刷新，2026-11-22 真机事故），
+  // 只改盘上那份的话，uptime 仍是真实的 0 秒、依旧走「刚重启」分支。
+  const restoreBoot = mod.__test.setBootAt(Date.now() - 3 * 3600 * 1000)
+  try {
+    const state2 = mod.__test.readState()
+    state2.server = { ...(state2.server || {}), startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString() }
+    mod.__test.writeState(state2)
+    const stale = String(await doctor.execute({}))
+    assert.ok(stale.includes('没轮询过'), '跑久了还陈旧才算故障：' + stale.slice(0, 300))
+  } finally {
+    restoreBoot()
+  }
+})
+
+// 真机事故（2026-11-22）的第二条腿：重启后**一次都没轮询过**时，doctor 现在看不出来。
+// 现场 lastPoll 停在进程启动之前 24 小时，但它既不是「刚重启」（uptime 早超阈值），
+// 也不是「定时器丢了」（那条要 age > staleMs 且 uptime > staleMs，两者都满足时会误报成后者 ——
+// 而真正的原因是启动挂载失败，报「定时器可能丢了」会把人引到错误的方向）。
+test('watch_doctor：重启后还没轮询过要单独报出来（启动挂载失败）', async () => {
+  const tools = []
+  const dir = tempDir('zhuli-bootfail-')
+  process.env.DSH_SUPERAGENT_STATE = dir
+  process.env.DSH_SUPERAGENT_NO_POLL = '1'
+  // 注意：之后一律用**本用例自己的** appliedTools —— 大写的 `tools`（:1157）是本用例内新建的数组，
+  // 而模块级同名变量只装第一次 `apply()` 注册的工具。取错数组会让 doctor 拿到 undefined，
+  // `String(await doctor.execute())` 就变成 "undefined"、断言永远假（2026-11-22 自查抓到）。
+  const appliedTools = []
+  const ctx = {
+    tools: { register: (tool) => appliedTools.push(tool) },
+    webServer: { register: () => () => {} },
+    agents: { get: () => null, currentInitiator: () => ({ id: 'session-bootfail' }) },
+    get: () => null, on() {}, effect: (fn) => fn(), inject: () => {},
+  }
+  const mod = await import('../lib/index.js?bootfail=' + Date.now())
+  mod.apply(ctx)
+  const doctor = appliedTools.find((t) => t.name === 'watch_doctor')
+  assert.ok(doctor, 'watch_doctor 必须被注册')
+  await appliedTools.find((t) => t.name === 'watch_start').execute({ repo: 'acme/bootfail' })
+  // `watch_start` 只排一个 0~5 秒的 boot tick，**第一轮跑完才有 lastPoll**；
+  // 不等它就把旧 lastPoll 写进去，会被随后到达的 persistEntry 合并覆盖（实测踩到）。
+  await sleep(600)
+
+  // 现场形状：进程 10 分钟前启动（已过「刚重启」豁免的 max(3×interval, 5min)），
+  // lastPoll 停在 24 小时前 —— 也就是「重启后一次都没轮询」。
+  // 盘上的 server.startedAt 故意留成两天前：真机事故里那份根本没被刷新，读它会把故障误判成「刚重启」。
+  const bootAt = Date.now() - 10 * 60 * 1000
+  const restoreBoot = mod.__test.setBootAt(bootAt)
+  try {
+    const state = mod.__test.readState()
+    const key = Object.keys(state.watchers)[0]
+    state.watchers[key].lastPoll = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    state.server = { ...(state.server || {}), startedAt: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString() }
+    mod.__test.writeState(state)
+
+    const text = String(await doctor.execute({}))
+    assert.ok(text.includes('重启后还没轮询过'),
+      '重启后 lastPoll 早于本进程启动时刻、且已过豁免期，必须明确报「启动挂载可能失败」：' + text.slice(0, 400))
+    assert.ok(!text.includes('刚重启'), '已经过了豁免期，不能说刚重启：' + text.slice(0, 400))
+    assert.ok(!text.includes('定时器可能丢了'), '真因是启动挂载失败，不能误导成「定时器丢了」：' + text.slice(0, 400))
+  } finally {
+    restoreBoot()
+  }
 })
 
 test('watch_trace 文本：一切正常时一行说完，异常才展开', async () => {
@@ -2101,4 +2170,69 @@ test('POST /watch resume：离线开关生效，人工补跑也要挡住（revie
   if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
   else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
   await call('POST', '/session-superagent/watch', { action: 'delete', id })
+})
+
+// ─── 重启后自动挂载（真机事故 2026-11-22）────────────────────────────────
+//
+// 现场：宿主 11-21 23:11 重启，之后 24 小时里三条守一次都没轮询。
+// 根因在 `apply()` 启动段：`for (const entry of ...) startWatcher(state.watchers[id])`
+// —— 循环变量叫 `entry`，`id` 这个变量在作用域里根本不存在，于是
+// `state.watchers[undefined]` = undefined，`startWatcher(undefined)` 在
+// `timers.has(entry.id)` 处抛 TypeError，被外层 `try {} catch {}` 吞掉：
+// **重启后一条守都不挂，而且没有任何报错**，面板照旧显示「运行中 · 正常」。
+
+test('重启后必须把 enabled 的守重新挂上定时器（启动段的 id 笔误）', async () => {
+  assertTempStateDir('apply 启动挂载')
+  // 造一份「宿主重启过的」状态：一组已存在的守，其中 enabled 的必须被重新挂上
+  const bootDir = tempDir('zhuli-boot-')
+  const previousState = process.env.DSH_SUPERAGENT_STATE
+  const previousNoPoll = process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_STATE = bootDir
+  delete process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_OFFLINE = '1'
+  try {
+    const bootState = {
+      schemaVersion: 1,
+      watchers: {
+        'o/live#session-boot': { id: 'o/live#session-boot', repo: 'o/live', provider: 'github', sessionId: 'session-boot', enabled: true, intervalSec: 60 },
+        'o/paused#session-boot': { id: 'o/paused#session-boot', repo: 'o/paused', provider: 'github', sessionId: 'session-boot', enabled: false, intervalSec: 60 },
+        'pr:o/live-pr#session-boot': { id: 'pr:o/live-pr#session-boot', repo: 'o/live-pr', provider: 'github', sessionId: 'session-boot', enabled: true, intervalSec: 60, kind: 'pr' },
+      },
+    }
+    writeFileSync(join(bootDir, 'watchers.json'), JSON.stringify(bootState, null, 1))
+
+    // 模拟宿主重启：新进程里重新 import 一份模块再 apply()。
+    // query 换掉只是为了拿到一份全新的模块实例（模块级 __test 探测要指向它）。
+    const fresh = await import('../lib/index.js?boot=' + Date.now())
+    const bootTools = []
+    fresh.apply({
+      tools: { register: (tool) => bootTools.push(tool) },
+      // 不注册 webServer：启动挂载与路由无关，挂不挂都得把守挂上
+      agents: { currentInitiator: () => ({ id: 'session-boot' }), get: () => null },
+      get: () => null,
+      effect: (fn) => fn(),
+      inject: () => {},
+    })
+
+    // 肯定式断言：enabled 的守必须有 interval 定时器。
+    // 反之（被 TypeError 吞掉时）三条都读 false —— 这就是真机现场。
+    assert.equal(fresh.__test.watchTimerPending('o/live#session-boot'), true,
+      '重启后 enabled 的守必须自动重新挂上，否则宿主一重启轮询就永久停摆')
+    assert.equal(fresh.__test.watchTimerPending('pr:o/live-pr#session-boot'), true,
+      'PR 守同样必须在重启后自动重新挂上')
+    // 否定式断言：暂停的守不该被挂（否则「暂停」在重启后就失效了）
+    assert.equal(fresh.__test.watchTimerPending('o/paused#session-boot'), false,
+      '暂停的守重启后不该被挂上定时器')
+
+    // 收尾：这些定时器指着临时目录，不能留在进程里跨用例
+    for (const id of ['o/live#session-boot', 'pr:o/live-pr#session-boot']) {
+      fresh.__test.stopWatchTimerForTest?.(id)
+    }
+  } finally {
+    if (previousState === undefined) delete process.env.DSH_SUPERAGENT_STATE
+    else process.env.DSH_SUPERAGENT_STATE = previousState
+    if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
+    else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
+    delete process.env.DSH_SUPERAGENT_OFFLINE
+  }
 })
