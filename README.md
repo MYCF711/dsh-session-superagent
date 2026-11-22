@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MYCF711/dsh-session-superagent/releases"><img src="https://img.shields.io/badge/version-1.0.0-green.svg" alt="version"></a>
+  <a href="https://github.com/MYCF711/dsh-session-superagent/releases"><img src="https://img.shields.io/badge/version-1.1.0-green.svg" alt="version"></a>
   <a href="https://www.npmjs.com/package/dsh-session-superagent"><img src="https://img.shields.io/npm/v/dsh-session-superagent?color=4D6BFE" alt="npm"></a>
   <img src="https://img.shields.io/badge/license-MIT-4D6BFE" alt="license">
 </p>
@@ -26,7 +26,7 @@
 - **盯**：轮询仓库的 issue/PR，按规则决定要不要叫醒当前会话；
 - **办**：会话空闲时把任务书塞进来，我读仓库的 `AGENTS.md`，修 bug、回评论、开 PR、关单。
 
-我不占独立实例，不用 PTC，也不另建 agent 预设。我就是你当前会话多出来的一双眼睛和一只手。
+默认 `inline`：我不占独立实例，不用 PTC，也不另建 agent 预设，就是你当前会话多出来的一双眼睛和一只手。显式选择 `worker` 时，才会为每个 Ticket 建独立 worker Session 和工作目录；不会因为装了插件就自动多开执行体。
 
 ## 能做什么
 
@@ -36,6 +36,10 @@
 - **收口** — `watch_ack` 打「已处理」标签，同一条不会反复叫醒。
 - **隔离干活** — 可选一次性 `git worktree`，改副本、开 PR，不碰主工作区。
 - **看得见** — 状态栏卫星环 + 面板：为什么叫醒、为什么没叫醒、上次错误。
+- **Ticket 与续聊** — 记录 open/assigned/waiting/ended、执行历史和人类 resume；后续评论回到原 Thread/Ticket。
+- **独立 worker（可选）** — `executionMode: "worker"` 每 Ticket 一个持久 worker Session，默认仍是当前会话 inline。
+- **可靠 Outbox** — CAS、同 Ticket FIFO、失败退避和崩溃恢复；评论 marker 与 messageId 防重复外发。
+- **模块化面板** — Ticket records、当前执行、健康、Outbox、回复草稿；新视图支持 zh/en。
 
 ## 和 DSH 自带能力一起用
 
@@ -76,6 +80,9 @@ dsh plugin --profile desktop add dsh-session-superagent@0.10.2
 
 ```text
 watch_start({ repo: "owner/name", goal: "处理这个仓库的 issue" })
+
+// 可选：每个 Ticket 用独立 worker Session；省略仍是当前会话 inline
+watch_start({ repo: "owner/name", executionMode: "worker" })
 ```
 
 `activeHours` 支持逗号或分号分隔的多段 `HH:MM-HH:MM`，任一段命中就会唤醒，每段都可以跨夜；留空仍是全天：
@@ -108,7 +115,7 @@ watch_status()
 ## 界面
 
 - 输入框下方最左端：**卫星环**，一眼看到所有会话级 superagent 的运行、暂停、异常。
-- 中间栏「主理鱼」：总览 / 判定 / 触发 / 设置。尽量使用 DSH 原生结构树、素材和设计语言。
+- 中间栏「主理鱼」：总览 / 判定 / 触发 / 设置；存在模块化能力时另有「任务」页签，展示 Ticket、执行、Outbox 和草稿。尽量使用 DSH 原生结构树、素材和设计语言。
 
 ## 配置
 
@@ -158,13 +165,14 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 - 安装、升级、回滚：[SETUP.md](SETUP.md) / [UPDATING.md](UPDATING.md)
 - 给其他 agent 的仓库入口：[AGENTS.md](AGENTS.md)
+- 模块化房间与端口：[设计-模块化房间.md](docs/设计-模块化房间.md)
 - 工具 JSON 契约：[docs/json-契约.md](docs/json-契约.md)
 - 真机验证清单：[docs/真机验证清单.md](docs/真机验证清单.md)
 - 完整开发与门禁：见 `AGENTS.md` 的「开发与验收」
 
 ## 验证
 
-1233 项单测、44 项 preflight（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、11 项 UI 全绿（1.0.0）。
+已通过 1389 项单测、20 房边界、11 项 UI 静态审计（1.1.0 实验仓候选）。44 项隔离 preflight 全过（41 PASS + 3 SKIP）、npm dry-run 打包与另起实例通过。两组双盲 Debug 已执行，B 发现的旧版高项已修复并经真实 Chromium 复测；双主题与 700px 预览已出图，UI 已确认；仅允许独立实验仓分支，不推主仓库。
 
 ### 贡献归属门禁
 
@@ -180,7 +188,7 @@ node scripts/check-pr-attribution.mjs --pr 49 --against 41 --repo MYCF711/dsh-se
 
 | 说法 | 来源 |
 |---|---|
-| 版本 `0.10.8` | [package.json](package.json)、[npm](https://www.npmjs.com/package/dsh-session-superagent) |
+| 实验候选 `1.1.0` | [package.json](package.json)；未发布 tag / Release / npm；分支仅用于独立实验仓 |
 | 项目起点 | [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype) |
 | DSH 原生 UI | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)、`$DSH_HOME/DSH-UI-official.md`、`docs/ui-decomp/` |
 | 图标 | [DSH-X/docs/icon-app.png](https://github.com/yyh-001/DSH-X/blob/Staging/docs/icon-app.png)（MIT） |

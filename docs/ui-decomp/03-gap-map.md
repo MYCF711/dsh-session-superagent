@@ -4,6 +4,15 @@
 >
 > 本文件只做静态只读核对与后续实施清单；本次没有改 `client.js`、没有启动 GUI、没有 commit。
 
+## 实施回写（1.1.0 · 模块化会话级选择性复刻）
+
+- **官方**：`dsh-superagent-prototype@8c32a9dc5d72c033816c6a8110b37f40cf94fba4` 的 `ticket.tsx / execution.tsx / draft.tsx / widgets.tsx / client.css`。
+- **我们**：只移植会话级 TicketLine、详情、执行状态、Outbox、草稿和健康。`ModularView` 的 records 投影、`executorPaused`（仅 worker）与 `executionMode` 是主理鱼 derived，原因是旧 watcher/inline 必须保持原语义；不搬飞书、多人授权、Mandate 或团队角色。
+- **结构**：`.dt-column > Section`；Ticket 使用 `.dt-list > .dt-row.dt-ticket > .dt-ticket-stage + .dt-ticket-body`，详情使用 `.dt-page-head + KeyValues + .dt-danger-zone`，停止统一 ConfirmButton；草稿使用 `form/Fields/SaveBar`。
+- **derived 例外**：`ctx.get('sessions') + ctx.get('uiWorkspace')` 提供可选 Session 导航，缺服务时显式报错，不伪造路由；`sessionStorage` 只保存回复草稿，`executorPaused` 只暂停新的 worker 自动执行，inline 不变。
+- **验收**：模块化 UI 8/8、全量 1389/1389、UI audit 11/11；真实 Chromium 覆盖筛选、详情、Session 导航、停止确认、worker 暂停、草稿保存/恢复和 Outbox 错误。双主题桌面/700px 预览无横向溢出。
+- **未验**：真实 DSH WebView 的宿主 slot、读屏、触摸和长期 worker 运行；**用户看图确认前不推送**。
+
 ## 实施回写（0.9.264）
 
 本批已落地：官方 16×16 SVG path（含独立图元与 viewBox）、补 `chevron-up`、Trace/运行事件一事件一 `li.dt-event`、运行事件使用 `ol.dt-timeline`、删除不再叠加原生确认框、设置按钮直达对应分区、更新失败不再误报最新、诊断复制失败不再假报成功。

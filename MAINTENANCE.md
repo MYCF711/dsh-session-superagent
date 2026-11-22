@@ -7,57 +7,53 @@
 
 | 项 | 值 |
 |---|---|
-| 仓库 | `MYCF711/dsh-session-superagent` |
+| 仓库 | 独立实验仓 `MYCF711/dsh-session-superagent-refactor`（上游 `MYCF711/dsh-session-superagent`） |
 | npm 包名 | `dsh-session-superagent` |
-| 当前候选版本 | `1.0.0`（工作树候选；**尚未推 tag / Release / npm**） |
-| 最近已发布版本 | `0.11.0`；本轮不把候选版本写成已发布 |
-| 形态 | DSH 插件：12 个工具 + `cordis.patch.yml` + 客户端面板与状态栏圆环 |
+| 当前候选版本 | `1.1.0`（工作树候选；**尚未推 tag / Release / npm**） |
+| 最近已发布版本 | 上游 `0.11.0`；本轮候选不写成已发布 |
+| 形态 | DSH 插件：12 个工具 + 16 条路由 + 客户端面板与状态栏圆环 |
 | 目标宿主 | DeepSeek Harness `>=0.2.2-rc.1 <0.3.0-0`；Node ≥ 22.19；需已登录 `gh` CLI |
 
-## 二、当前状态（2026-11-21）
+## 二、当前状态（2026-11-22）
 
 ```text
-基线        origin/main@a4742da（0.11.0）
-工作树      task/watermark-v2-rooms；前六房各有独立提交，真实接线/终审修复随后一并提交
-候选版本    1.0.0；删除旧水位路径与 12 个旧 named exports，属于 Breaking
-状态模型    obs 是唯一新鲜度事实源；seen/cursor/pending 只作迁移输入或派生投影
+基线        上游 main@95b5a72（水位 v2 / 1.0.0）
+工作树      dsh-sa-modular-refactor；task/modular-rooms；只允许独立实验仓分支，不推主仓库
+候选版本    1.1.0；20 个最小房间 + modular-runtime + modular-outbox-host
+默认行为    旧 watcher 仍 inline；只有显式 executionMode=worker 才创建独立 worker Session
 ```
 
 | 资产 / 验证 | 当前结果 |
 |---|---|
-| 全量单测 | **1233/1233，exit 0** |
-| 隔离 profile preflight | **44 项，exit 0**；冒烟 / 贡献归属（无 PR 上下文）/ 维护一致性（PR 阶段）为规范 SKIP |
-| 房间依赖 | **6/6 PASS**；`scripts/check-rooms.mjs` 已接入 preflight |
-| 另起实例 | 隔离安装副本 `1.0.0`、12 个工具、创建/读取 watcher、`watermarkVersion=2` 均通过 |
-| 运行库净减 | **8746 → 8692 行（-54）**；dependencies / devDependencies 均未增加 |
-| 决策性能 | 100 条目 × 1000 次：v1 中位 0.0193ms，v2 中位 0.0040ms |
-| 真实 GitHub ack | 临时标签写入 + 写后重读通过，随后已清理 |
-| 真实 Gitee ack | **未验**：无已有 PR，多个仓库创建 issue 持续 404（`project or enterprise`） |
-| UI | 本轮未改 UI 结构；既有 `ui-audit` 由 preflight 复验通过 |
+| 全量单测 | **1389/1389，exit 0**；证据 `dsh-sa-artifacts/modular-full-test-v7.log` |
+| 房间边界 | **20/20 PASS**；UI audit **11/11** |
+| Outbox | 同进程单飞、跨进程租约、热重载共享 flush、不同 Ticket 排队、attempts 栅栏均有回归 |
+| 生产接线 | worker/inline、bot/系统事件、ack 操作 ID、watcher 世代、marker 分页、执行模式切换已定向复验 |
+| 草稿 | revision 乐观锁 + 旧值 409；前端保留另一标签页未保存文本 |
+| 隔离 preflight / 打包 / 实例 | **44 项全过（41 PASS + 3 SKIP）**；`modular-preflight-final.log`。`npm pack --dry-run` 通过；另起实例 `1.1.0 / 12 tools / 16 routes / watermark=2`，见 `modular-instance.log` |
+| 双盲 Debug | task-13 A：**38/38，0 findings**；task-14 B：冻结旧版发现 High 4，当前已修停止确认、草稿恢复、详情/Session 导航与 worker 暂停；报告见 `blind-debug-a/REPORT.md`、`blind-debug-b/REPORT.md` |
+| UI | 官方 `8c32a9d` 选择性会话级复刻已完成；双主题/700px 图与真实 Chromium 交互通过；**UI 已获用户确认，只允许实验仓分支** |
 
-关键证据位于 `dsh-sa-artifacts/`：`watermark-v2-final-test.log`、`watermark-v2-final-preflight.log`、`verify-isolated-instance.mjs`、`watermark-v2-independent-audit.md`。
+### 本轮已修复的关键边界
 
-### 本轮关闭的问题
-
-- 未列条目不靠全局 cursor / pending 也会被后续批次交付；ack 只写本行。
-- PR 评论 11/12 分两轮交付；legacy `seenComments` 不吞 11、不回退、不夹带旧评论。
-- `onlyNewComments` 使用 discussion / review 分通道计数指纹，同秒新增与 GraphQL/REST 切换均不会误判。
-- `watch_ack` 通过 provider 写后重读并提交 post-cursor；Gitee 归一化保留 body。
-- 跨进程单写者锁覆盖 read-merge-rename；Windows `EPERM` 有界重试，`writeError` 不伪装成功。
-- 同 round 合并不读时钟，行 cursor 与 winning event 一致，`delivered` 与 `undelivered` 不共存。
-- 投影区分「尚未拉取」（计数 `null`）与「明确 0 条」。
+- 活跃 `leaseUntil` 不被其他进程 recover；过期租约才允许接管，marker/messageId 负责崩溃后的远端查重。
+- 同 ctx/热重载共享 host；同 scope 共用回执，不同 scope 排队执行，A 的回执不能冒充 B。
+- bot 与无评论系统事件不 resume ended Ticket；ack ID 包含 kind/comment/note/label 与 watcher 世代。
+- inline resume 缺会话 409；busy queued 不回滚；最终失败只回滚同 assignment 世代。
+- 执行模式切换结束旧 Assignment 并解除/重建订阅；worker→inline 必须先停旧 worker。
+- 成功写盘清 `lastWriteError`；inline 不需要 `sessionController`，不再误报 paused。
+- marker 查重分页，截断显式失败；不能因一页没查到而重复评论。
 
 ### 未验证 / 边界
 
-- 真实 Gitee ack 写操作（上表原因）；不能从 fake / 本地归一化推断为通过。
-- 真实 DSH 宿主重载后的长期运行、读屏 / 触摸 / IME；本轮没有重启宿主。
-- 跨主机 NFS/SMB 锁语义、不经过本锁的外部写者、连续 24 小时运行。
-- Node 22/24 矩阵以 PR CI 为准，本机实测 Node 24.20。
+- UI 已有最终截图、computed style 与真实点击链路；仍待用户确认，未验真实宿主读屏/触摸/IME，不冒充所有可访问性场景已通过。
+- 双盲 B 的当前修复版未再做一次独立复评分；本主线以全量、隔离 preflight 和真实 Chromium 交互复验，未伪称 B 最终零发现。
+- 真实 DSH 宿主重载后的长期运行、读屏/触摸/IME；本轮不重启宿主。
+- 真实 Gitee 写操作仍未验；fake/本地归一化不能替代真实仓库回读。
+- 跨主机 NFS/SMB 锁语义、不经过本锁的外部写者、连续 24 小时运行未验。
 
 ## 三、下一步
 
-1. 固化当前完整 diff，确保所有 fixture 一并提交；不能只推前六个房间提交。
-2. 独立审查当前快照后，推 `task/watermark-v2-rooms` 并开 PR；双 Node CI 通过才合入。
-3. 合并前按 [UPDATING.md](./UPDATING.md) 处理 `v1.0.0` tag，避免 main「先合并后推 tag」的维护一致性竞态。
-4. Release 与 npm 是独立发布动作；未执行前一律称 `1.0.0` 为候选版本。
-5. 有可写 Gitee 测试 issue/PR 后，补真实 ack + 写后重读并清理，再关闭该未验项。
+1. UI 已确认；只允许独立实验仓 `task/modular-rooms`，禁止推主仓库。
+2. 推送后核对远端提交与 CI；不发布 tag / Release / npm。
+3. 有可写 Gitee 测试 issue/PR 后，补真实 ack + 写后重读并清理，再关闭该未验项。

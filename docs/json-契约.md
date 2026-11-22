@@ -30,6 +30,7 @@
 |---|---|
 | `repo` | 稳定 |
 | `provider` | 稳定 |
+| `executionMode` | 稳定 |
 | `sessionId` | 稳定 |
 | `enabled` | 稳定 |
 | `intervalSec` | 稳定 |

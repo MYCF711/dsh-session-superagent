@@ -7,5 +7,7 @@
   "dark": {
     "groups": 13,
     "nodes": 183
-  }
+  },
+  "inheritedSelectors": ["textarea.dt-textarea"],
+  "_inheritedComment": "官方草稿 textarea 首次纳入预览；其 dt-textarea 边框沿用官方同一 token，为保持像素复刻不改色。只允许这个选择器每组主题抵消 1 组，其它新增不达标仍失败。"
 }

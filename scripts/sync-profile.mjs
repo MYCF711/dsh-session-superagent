@@ -66,7 +66,8 @@ const TARGETS = [
   'bin/check.mjs',
   'package.json', 'cordis.patch.yml', 'README.md', 'CHANGELOG.md', 'LICENSE',
   'assets/icon-180.png', 'assets/icon-app.png',
-  'lib/index.js', 'lib/watch.js', 'lib/rooms/watermark-state.js', 'lib/rooms/watermark-decision.js', 'lib/rooms/data-provider.js', 'lib/rooms/delivery.js', 'lib/rooms/scheduler.js', 'lib/rooms/projection.js', 'lib/gh-format.js', 'lib/pr-watch.js', 'lib/gitee.js', 'lib/gates.js', 'lib/redact.js', 'lib/body.js', 'lib/state-migration.js', 'lib/update.js', 'lib/semver.js',
+  'lib/index.js', 'lib/watch.js', 'lib/rooms/watermark-state.js', 'lib/rooms/watermark-decision.js', 'lib/rooms/data-provider.js', 'lib/rooms/delivery.js', 'lib/rooms/scheduler.js', 'lib/rooms/projection.js', 'lib/rooms/ticket-state.js', 'lib/rooms/thread-subscription.js', 'lib/rooms/execution-assignment.js', 'lib/rooms/executor-host.js', 'lib/rooms/outbox.js', 'lib/rooms/admission-eval.js', 'lib/rooms/source-registry.js', 'lib/rooms/skill-pack.js', 'lib/rooms/ticket-projection.js', 'lib/rooms/draft.js', 'lib/rooms/prompt-config.js', 'lib/rooms/i18n.js', 'lib/rooms/modular-runtime.js', 'lib/rooms/modular-outbox-host.js', 'lib/gh-format.js', 'lib/pr-watch.js', 'lib/gitee.js', 'lib/gates.js', 'lib/redact.js', 'lib/body.js', 'lib/state-migration.js', 'lib/update.js', 'lib/semver.js',
+  'skills/dsh-session-superagent-github/SKILL.md',
 ]
 
 // 反向守卫（S1）：TARGETS 里的每一条都必须真的在仓库里。

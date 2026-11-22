@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-22 —— 模块化房间与单用户执行（实验候选）
+
+### Added —— 模块化房间（独立实验仓）
+
+- 官方：组织级 Source/Policy/Ticket/Executor/Delivery 全套模型。我们：保留主理鱼 watcher 与水位 v2，只新增单人所需的 20 个最小房间；不做飞书、多人授权和团队多角色。为什么更好：保留已验证的 GitHub/Gitee/UI 能力，按房独立验收，不把单用户产品变成团队编排系统。
+- **Ticket 与 Thread**：`open/assigned/waiting/ended` 生命周期、执行历史、显式人类 resume、Thread 订阅和事件去重；ended 的非人事件不会直接复活执行体。
+- **inline / worker**：默认仍唤醒当前会话；`executionMode: "worker"` 通过 `sessionController` 与 `workspaceRegistry` 为每 Ticket 建持久 worker Session，缺宿主能力显式失败，不静默回退。
+- **持久化 Outbox**：同 Ticket FIFO、CAS 冲突重试、attempts 栅栏、失败退避、崩溃恢复；worker prompt 使用稳定 messageId，GitHub/Gitee 评论带不可见 marker 并在重试前查重。
+- **Admission / Source / 视图**：确定性 gate 先行、assessment 不得推翻拒绝；provider registry 接入真实 ack；Ticket records、执行、健康、Outbox、草稿与 zh/en 提示词接入 `/state` 和面板。
+- **模块化路由**：新增 `/tickets`、`/outbox`、`/draft`，总路由 16 条；写操作统一 `guardWrite` 与模块化 CAS，`/state` 区分未知 `null` 与显式空集合 `0`。
+
 ## [1.0.0] - 2026-11-21 —— 水位 v2 与最小交付房间
 
 ### Breaking

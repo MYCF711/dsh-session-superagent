@@ -281,9 +281,12 @@ test('cleanup', () => {
   rmSync(STATE_DIR, { recursive: true, force: true })
 })
 
-test('路由面收敛：只保留 13 条（/config 与 /client-hello 已下线，新增 /update /trace 与四条 /gates）', () => {
+test('路由面收敛：16 条（新增模块化 /tickets /outbox /draft，旧 /config 保持下线）', () => {
   const expected = [
     '/session-superagent/state',
+    '/session-superagent/tickets',
+    '/session-superagent/outbox',
+    '/session-superagent/draft',
     '/session-superagent/client-note',
     '/session-superagent/client-error',
     '/session-superagent/watch',
@@ -1220,6 +1223,7 @@ test('/state 的 304 真的会命中：60 秒 12 次拉取，只有变化那几�
 
   // 12 次拉取：第 1 次拿 ETag，之后内容不变应有 10 次 304；第 6 次改一下状态
   const budget = { statuses: [], bytes: 0, saved: 0 }
+  let referenceBytes = 0
   let etag = ''
   for (let i = 1; i <= 12; i += 1) {
     if (i === 6) {
@@ -1232,6 +1236,7 @@ test('/state 的 304 真的会命中：60 秒 12 次拉取，只有变化那几�
     budget.statuses.push(res.statusCode)
     budget.bytes += Buffer.byteLength(res.body)
     if (res.statusCode === 200) {
+      if (referenceBytes === 0) referenceBytes = Buffer.byteLength(res.body)
       etag = res.headers.etag
       budget.saved += 0 // 200 就是要下载的
     } else if (res.statusCode === 304) {
@@ -1240,7 +1245,7 @@ test('/state 的 304 真的会命中：60 秒 12 次拉取，只有变化那几�
   }
   const not304 = budget.statuses.filter((code) => code !== 304).length
   assert.equal(not304, 2, '12 次里只有 2 次 200（首次 + 改状态那次），实际：' + budget.statuses.join(','))
-  assert.ok(budget.bytes < 8 * 1024, '省下来的正文要明显（实际收到 ' + budget.bytes + ' 字节）')
+  assert.ok(budget.bytes < referenceBytes * 3, '2 次 200 + 10 次 304 必须少于 3 份完整响应（实际 ' + budget.bytes + ' / 单份基准 ' + referenceBytes + '）')
 })
 
 test('watch_start 能设 ackLabel：两个会话可各用各的标签，互不挡', async () => {

@@ -88,6 +88,19 @@ const snapshot = {
   body: {
     sessionTitle: 'README 收尾与发布',
     sessionGoal: null,
+    modular: {
+      actions: true, locale: 'zh',
+      records: {
+        total: 1, counts: { open: 0, assigned: 1, waiting: 0, ended: 0 },
+        records: [{ id: 'ticket:github:MYCF711/dsh-session-superagent#67', threadKey: 'github:MYCF711/dsh-session-superagent#67', status: 'assigned', ownerSessionId: 's1', workdir: 'E:/temp/iso', assignmentId: 'assign:ticket:67:1', resumeCount: 0, historyCount: 2 }],
+        subscriptions: { active: 1, inactive: 0 },
+        assignments: { total: 1, counts: { assigned: 1, waiting: 0, ended: 0 } },
+        outbox: { total: 1, records: [{ id: 'ack:67', ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', channel: { type: 'ack' }, body: '处理完成，准备回写。', status: 'failed', attempts: 1, nextAt: iso(-5000), createdAt: iso(60000), updatedAt: iso(5000), lastError: '网络超时：已按退避保留，恢复后可重试。' }], counts: { pending: 0, sending: 0, sent: 0, failed: 1, gone: 0 } },
+      },
+      execution: { total: 1, activeCount: 1, running: 1, queued: 0, maxWorkers: null, paused: false, current: { id: 'ticket:github:MYCF711/dsh-session-superagent#67', status: 'assigned' }, assignment: { id: 'assign:ticket:67:1', ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', sessionId: 'worker-ticket:67', workdir: 'E:/temp/iso', status: 'assigned', attempts: 1 } },
+      deployment: { status: 'ready', stateDir: 'E:/temp/state', problem: null, health: [{ name: 'executor', state: 'ready', detail: null }], counts: { total: 1, ready: 1, error: 0, starting: 0, paused: 0, unknown: 0 } },
+      draft: { base: { ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', body: '' }, value: { ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', body: '处理完成，准备回写。' }, revision: 0, phase: 'editing', dirty: true },
+    },
     // 诊断页要用：分诊信号（事实/判断 + 权重 + 是否默认开）
     triageSignals: [
       { key: 'reopened', label: '被重新打开', kind: 'fact', weight: 100, default: true, why: 'state_reason=reopened' },
@@ -185,6 +198,10 @@ function render(node) {
     if (props[key] !== undefined && props[key] !== false) parts.push(attr(key, props[key]))
   }
   if (keyIsVoid(tag)) return '<' + tag + parts.join('') + '>'
+  if (tag === 'textarea') {
+    const attrs = parts.filter((part) => !part.startsWith(' value=')).join('')
+    return '<textarea' + attrs + '>' + render(props.value === undefined ? (props.children || []) : props.value) + '</textarea>'
+  }
   return '<' + tag + parts.join('') + '>' + (props.children || []).map(render).join('') + '</' + tag + '>'
 }
 function keyIsVoid(tag) {
@@ -309,11 +326,21 @@ const deskHooks = ({ snap = snapshot, tab = 'overview', notice = null, glossary 
 
 const ONLY_NAME = (process.argv.find((a) => a.startsWith('--only=')) || '').slice('--only='.length)
 
+const modularHooks = ({ detail = false, confirm = false } = {}) => {
+  const hooks = deskHooks({ tab: 'modular' })
+  hooks[24] = 'all'
+  hooks[25] = detail ? 'ticket:github:MYCF711/dsh-session-superagent#67' : null
+  if (confirm) hooks[26] = true
+  return hooks
+}
 const scenarios = [
   { name: '总览', hooks: deskHooks({}) },
   { name: '行内编辑', hooks: editingHooks(false) },
   { name: '行内编辑（已修改）', hooks: editingHooks(true) },
   { name: '判定', hooks: deskHooks({ tab: 'judge' }) },
+  { name: '模块化任务', hooks: modularHooks() },
+  { name: '模块化任务（Ticket 详情）', hooks: modularHooks({ detail: true }) },
+  { name: '模块化任务（停止确认）', hooks: modularHooks({ confirm: true }) },
   { name: '触发', hooks: deskHooks({ tab: 'trigger' }) },
   // 页签名称：这一帧展示「已保存」的样子（输入框里就是生效中的名字；保存按钮因无改动而禁用、
   // 恢复默认可点）。不注入 toast：成功提示走 useToast 的 toastView 槽，不能拿错误色的 notice 冒充。

@@ -48,6 +48,7 @@ export function loadClient(options = {}) {
     // 页签名称的本地覆盖存在 localStorage 里（本浏览器 profile 范围）。沙箱默认**没有**它 ——
     // 等同于隐私模式/受限沙箱，用例要模拟「存得住」时显式传一个内存版实现。
     localStorage: options.localStorage,
+    sessionStorage: options.sessionStorage,
     setInterval: () => 0,
     clearInterval: () => {},
     // 审核 T38 第 5 条：沙箱里没有 setTimeout —— 点「保存凭证」实测

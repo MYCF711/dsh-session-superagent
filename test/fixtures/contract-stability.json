@@ -16,6 +16,7 @@
     "watcher": {
       "repo": "stable",
       "provider": "stable",
+      "executionMode": "stable",
       "sessionId": "stable",
       "enabled": "stable",
       "intervalSec": "stable",

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { checkRooms, inspectRoomImports } from '../scripts/check-rooms.mjs'
 
-test('房间边界：六个真实房间没有非法依赖回边', () => {
+test('房间边界：二十个真实房间没有非法依赖回边', () => {
   const reports = checkRooms()
-  assert.equal(reports.length, 6)
+  assert.equal(reports.length, 20)
   assert.deepEqual(reports.filter((report) => !report.ok), [])
 })
 
