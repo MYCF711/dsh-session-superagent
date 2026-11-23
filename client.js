@@ -443,6 +443,7 @@ window.__ModuleLoader__.load({
     const GLOBAL_PANEL_ID = 'session-superagent'
     const RIGHT_TAB_ID = 'dsh-session-superagent/session'
     const RIGHT_TAB_KIND = 'sessionSuperagent'
+    const RIGHT_TAB_UNAVAILABLE = '宿主 sidebarRight.openTab 服务不存在'
     const HEADER_UTILITY_ID = 'session-superagent-current'
     let hostLayout = null
     let hostSidebarRight = null
@@ -460,7 +461,7 @@ window.__ModuleLoader__.load({
 
     function openSessionSuperagentTab() {
       if (!hostSidebarRight || typeof hostSidebarRight.openTab !== 'function') {
-        throw new Error('宿主 sidebarRight.openTab 服务不存在')
+        throw new Error(RIGHT_TAB_UNAVAILABLE)
       }
       // 右栏 session slot 自带当前 sessionId；调用方只传 kind，不拼 sidebar:// 地址或伪造 params。
       return hostSidebarRight.openTab(RIGHT_TAB_KIND)
@@ -799,6 +800,8 @@ window.__ModuleLoader__.load({
      * 以前这里是一整套自成体系的 inline style，和原生界面放一起能看出断层。
      */
     const DOCK_CSS = `
+/* 目标会话选择器进入预览后，控件边界也须达到 3:1；只换官方 token，不提高豁免基线。 */
+.dt-page .dt-select { border-color: var(--dsw-alias-label-tertiary); }
 /* HoursField 多段：沿用官方 dt-hours 行与 dt-btn，只补 derived 纵向列表。 */
 .sa-hours-list { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 /* Composer dock 入口：保留 20px derived 几何；交互色与焦点复用官方 dt-btn / ghost 规则。 */
@@ -840,7 +843,7 @@ window.__ModuleLoader__.load({
 @media (hover: none) { .sa-dock-actions { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sa-dock-actions { transition: none; } }
 .sa-dock-empty { padding: 4px 14px 12px; color: var(--dsw-alias-label-tertiary); }
-.sa-dock-foot { padding: 8px 14px 10px; border-top: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-caption); }
+.sa-dock-foot { padding: 8px 14px 10px; border-top: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); }
 `
 
     /**
@@ -5485,7 +5488,7 @@ window.__ModuleLoader__.load({
       const unavailable = !props.sessionId
         ? '当前头部 slot 没有 sessionId'
         : !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
-          ? '宿主 sidebarRight.openTab 服务不存在'
+          ? RIGHT_TAB_UNAVAILABLE
           : null
       const open = async () => {
         if (unavailable) return
