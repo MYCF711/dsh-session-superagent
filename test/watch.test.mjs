@@ -47,7 +47,7 @@ import {
   hasAckLabel,
   itemTrace, nextDelayMs, normalizeFilters, passesFilters, pruneWakeTimes,
   inActiveHours, mergePollResult, filterReason, pushFiltered,
-  staleWorktrees, worktreePlan, pollHealth,
+  staleWorktrees, worktreePlan, pollHealth, isWatcherEnabled,
 } from '../lib/watch.js'
 import { partitionItems, splitFresh, advanceSeen, recordReported, pruneSeen, newestUpdatedAt } from './fixtures/legacy-watermark.mjs'
 
@@ -3576,4 +3576,42 @@ test('pollHealth：已暂停 / 从未轮询 / 时间不可解析时不冒充故�
   assert.equal(paused.state, 'paused')
   const bad = pollHealth({ lastPoll: 'not-a-date', intervalSec: 300, enabled: true }, { now, bootAt })
   assert.equal(bad.state, 'never', '时间不可解析时不能判成故障')
+})
+
+// ── PR #68 review：pollHealth 的六条判据 ────────────────────────────────
+// 这里只钉纯函数；面板/状态投影那侧见 test/contract-stability.test.mjs 与 ui-audit。
+
+test('pollHealth：正常等待（活跃时段外 / 退避中 / 上限）不算停摆（review 第 1 条）', () => {
+  const now = Date.parse('2026-11-23T12:00:00Z')
+  const hourAgo = new Date(now - 3600_000).toISOString()
+  const base = { intervalSec: 60, enabled: true, lastPoll: hourAgo }
+  // 这三种情况下 lastPoll 本来就不会动，以前会同时报「轮询停了」和「时段外/退避中」
+  assert.deepEqual(pollHealth({ ...base, activeHours: '09:00-10:00' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'active-hours' })
+  assert.deepEqual(pollHealth({ ...base, nextAt: new Date(now + 60_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'backoff' })
+  assert.deepEqual(pollHealth({ ...base, deferReason: 'cap-watcher' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'cap' })
+  assert.deepEqual(pollHealth({ ...base, deferReason: 'cap-session' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'cap' })
+  // 对照：没有这些理由、同样一小时没轮询 → 真停摆
+  assert.deepEqual(pollHealth(base, { now, bootAt: now - 24 * 3600_000 }), { state: 'stalled' })
+})
+
+test('pollHealth：暂停判据与调度器同一口径（enabled 0 / "no" / "off"）（review 第 4 条）', () => {
+  const now = Date.parse('2026-11-23T12:00:00Z')
+  const base = { intervalSec: 60, lastPoll: new Date(now - 3600_000).toISOString() }
+  for (const value of [false, 0, 'false', 'FALSE', '0', 'no', 'off', ' off ']) {
+    assert.deepEqual(pollHealth({ ...base, enabled: value }, { now }), { state: 'paused' }, 'enabled=' + JSON.stringify(value) + ' 必须算暂停')
+    assert.equal(isWatcherEnabled({ enabled: value }), false, 'isWatcherEnabled 与 pollHealth 口径必须一致：' + JSON.stringify(value))
+  }
+  for (const value of [true, 1, 'true', 'yes', undefined, null]) {
+    assert.notEqual(pollHealth({ ...base, enabled: value }, { now }).state, 'paused', 'enabled=' + String(value) + ' 不该算暂停')
+  }
+})
+
+test('pollHealth：老的 enabled 守从没轮询过要给 boot-miss，不是永久健康（review 第 6 条）', () => {
+  const now = Date.parse('2026-11-23T12:00:00Z')
+  // 刚建的新守：还没有首轮，报 never 是对的
+  assert.equal(pollHealth({ intervalSec: 60, enabled: true, lastPoll: null, createdAt: new Date(now - 10_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }).state, 'never')
+  // 进程跑了很久、守也建了很久，却一次都没轮询 → 这是 bootstrap-miss，以前永久显示健康
+  assert.equal(pollHealth({ intervalSec: 60, enabled: true, lastPoll: null, createdAt: new Date(now - 10 * 3600_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }).state, 'boot-miss')
+  // 守是本次启动之后才建的（哪怕时间很短）→ 仍在豁免期
+  assert.equal(pollHealth({ intervalSec: 60, enabled: true, lastPoll: null, createdAt: new Date(now - 10_000).toISOString() }, { now, bootAt: now - 10 * 60_000 }).state, 'never')
 })

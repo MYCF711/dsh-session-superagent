@@ -43,11 +43,17 @@ const sameSet = (actual, expected) => {
  * 契约仍然有效 —— 只是判据从「集合相等」变成「实到 ⊆ 在册，且 stable/experimental 必须实到」：
  * 可选字段出现时必须叫在册的那个名字，没出现也不算违约。否则一个只在异常态才有的字段
  * 要么逼着调用方永远塞假数据，要么只能干脆不登记（那才是契约真正腐烂的方式）。
+ *
+ * ⚠️ 但 **required 必须始终比对**。老实现写的是
+ * `sameSet(actual, [...required, ...optional].filter((key) => actual.includes(key)))` ——
+ * filter 把 `required` 也一起过滤了，于是「缺一个 stable 字段」照样判相等，
+ * 这条用例就成了恒真（PR #68 review 第 3 条）。现在只让 optional 按实到情况参与比较。
  */
 const sameSetWithOptional = (actual, expected, manifest = {}) => {
   const optional = new Set(Object.entries(manifest).filter(([, level]) => level === 'optional').map(([key]) => key))
   const required = Object.keys(manifest).filter((key) => !optional.has(key))
-  return sameSet(actual, [...required, ...optional].filter((key) => actual.includes(key)))
+  const allowed = [...required, ...Object.keys(manifest).filter((key) => optional.has(key) && actual.includes(key))]
+  return sameSet(actual, allowed)
 }
 
 test('结构化输出的每个字段都在稳定性清单里（新增字段必须登记）', async () => {
@@ -111,4 +117,19 @@ test('清单里不能有已经不存在的字段（避免清单自己腐烂）',
     // optional = 只在特定状态出现（出现时必须叫这个名字，不出现不算违约）
     assert.ok(level === 'stable' || level === 'experimental' || level === 'optional', '级别只能是 stable / experimental / optional')
   }
+})
+
+// `sameSetWithOptional` 自己的四例（PR #68 review 第 3 条）：
+// 老实现把 required 也按 actual 过滤，缺 stable 字段照样通过 —— 这条用例本身必须被钉住，
+// 否则「契约没变」这句话就是恒真的。
+test('sameSetWithOptional：required 缺席要红，optional 缺席/出现都算通过', () => {
+  const manifest = { a: 'stable', b: 'experimental', c: 'optional', d: 'optional' }
+  // ① missingStable = false：缺了 stable 的 `a` 必须判不相等
+  assert.equal(sameSetWithOptional(['b', 'c'], Object.keys(manifest), manifest), false, '缺 stable 字段必须红')
+  // ② unknownExtra = false：多出一个没登记的名字必须判不相等
+  assert.equal(sameSetWithOptional(['a', 'b', 'zzz'], Object.keys(manifest), manifest), false, '多出未登记字段必须红')
+  // ③ optional 缺席 = true：`d` 没出现也算通过
+  assert.equal(sameSetWithOptional(['a', 'b', 'c'], Object.keys(manifest), manifest), true, 'optional 缺席应当通过')
+  // ④ optional 出现 = true：两个 optional 都在也算通过
+  assert.equal(sameSetWithOptional(['a', 'b', 'c', 'd'], Object.keys(manifest), manifest), true, 'optional 出现应当通过')
 })

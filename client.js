@@ -1826,9 +1826,17 @@ window.__ModuleLoader__.load({
 
     function orbitStateOf(w) {
       if (!w) return 'paused'
+      // 「轮询停了 / 重启后没跑起来」比 lastError 更严重：这时 lastError 往往是 null
+      //（压根没发起过请求，所以不会报错），以前它就这么被画成「主理中 · 绿色」，
+      // 「只看有问题」也筛不出来（PR #68 review 第 5 条）。
+      // 服务端只在停摆时回 `w.poll`，所以它出现就一定是异常。
+      if (w.poll) return 'error'
       // 历史数据里可能残留「gh: HTTP 304」这类不是错误的记录 —— 不把它当异常
       if (w.lastError && !/HTTP 304|304 Not Modified/i.test(String(w.lastError))) return 'error'
-      if (w.enabled === false) return 'paused'
+      // 暂停判据与服务端同一口径：`enabled: 0 / "no" / "off"` 也算暂停，
+      // 否则调度器不轮询、面板却写「主理中」（PR #68 review 第 4 条）。
+      if (w.enabled === false || w.enabled === 0) return 'paused'
+      if (typeof w.enabled === 'string' && /^(false|0|no|off)$/i.test(w.enabled.trim())) return 'paused'
       // 设了活跃时段、而此刻在窗口外：它其实不会唤醒，只是把条目攒着 ——
       // 这时候还标「主理中」就是在骗人（2026-11-02 用户截图指出）。
       if (w.activeHours && inWindowNow(w.activeHours) === false) return 'dormant'
@@ -4007,7 +4015,10 @@ window.__ModuleLoader__.load({
         || (watcher.filteredLog || []).some((entry) => String(entry.number).includes(needle) || String(entry.title || '').toLowerCase().includes(needle))
       const matchesBadge = (watcher) => !badgeFilter
         || repoBadges(watcher.repoAccess).some((badge) => badge.text === badgeFilter)
-      const hasProblem = (watcher) => Boolean(watcher.lastError)
+      // `poll`（= 轮询停了 / 重启后没跑起来）必须算进「有问题」：
+      // 否则「只看有问题」会漏掉最严重的那一类 —— 它连 lastError 都是 null。
+      const hasProblem = (watcher) => Boolean(watcher.poll)
+        || Boolean(watcher.lastError)
         || Boolean(watcher.lastReopened)
         || Number(watcher.silentWakes) >= 2
         || Boolean(repoStructureNote(watcher.repoAccess))
