@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **左侧全局中枢 + 会话右栏工作台**：官方自动化任务与 Forge 使用独立 main、会话头部入口和右栏共享页面；我们用同一个 `SuperagentPage` 按 `global/session` scope 复用 watcher、Ticket、Outbox、草稿、确认与 Session 导航，避免复制三套状态。左侧全局页可选择真实目标会话新建 watcher；会话头部图标、Dock/Orbit 与开始页标准卡打开 `sessionSuperagent` 右栏，旧中栏只保留迁移。
+- **服务端会话隔离**：`/state?sessionId` 真实过滤 watcher/Ticket/Outbox/事件/草稿，显式 `scope=global` 才返回全量目标与草稿；watch/Ticket/draft/Outbox 跨会话写入返回 403 且状态不变。会话 Outbox flush 不 recover 或触达其他会话，executor 全局暂停只允许全局入口。
+
+### Changed
+
+- **中栏不再承担主理鱼主页**：有官方 `layout.selectPanel` 时旧入口重定向左侧全局中枢；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作，不伪造导航。新导航的真实宿主交互、两组双盲和用户整版确认仍是发布门。
+
 ### Fixed
 
 - **headless / 宿主重启后守不再轮询**：吸收 @iJetLi 在上游 #68 的启动修复，`apply()` 改用当前 `entry` 挂载，单条守异常不再阻断其余守；无 `webServer` 的实例也能恢复 interval。补充 `pollHealth()` 与 `boot-miss/stalled/grace/ok/never/paused` 判据，`watch_doctor` 区分启动挂载失败和运行中停滞；`/state`、`watch_status` 和面板只在异常时输出可选 `poll` 字段，健康态不占轮询体积。
