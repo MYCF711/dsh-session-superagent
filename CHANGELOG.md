@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- **PR 守把「会话暂时不在宿主里」直接当成故障**（2026-11-23 真机：`pr:MYCF711/dsh-session-superagent` 那条主理鱼所在会话只是**休眠**，面板里还在、标题正常，但宿主重启后 `agents.get()` 拿不到它）。issue 守有 `sessionMissingVerdict` 的 10 分钟宽限期，**PR 守没有**：它把 wake 的 reason 直接写成 `lastError` 并 `bumpFailure`，面板立刻显示红色「异常」+「退避 459s」，用户以为守坏了、不敢继续监控。现在 PR 守与 issue 守共用同一套判据：宽限期内记为「会话尚未就绪（宿主可能刚启动）」并**不累计失败**，超过宽限期才升级成「会话已不在」。两句共用 `sessionMissingDeferText()`，不再复制粘贴。用例：PR 守首轮宽限（`lastError` 必须为 null、`nextAt` 必须为 null、必须记下 `sessionMissingSince`）+ 反向用例（超过宽限期必须真的报错并进退避）。
 - **宿主重启后，所有守一次都不再轮询**（2026-11-22 真机：11-21 23:11 重启，之后 24 小时零轮询，`lastError` 仍是 null，面板照旧「运行中 · 正常」，期间新建的 PR 全部漏掉）。根因在 `apply()` 的启动挂载段：`for (const entry of …) startWatcher(state.watchers[id])` —— 循环变量叫 `entry`，`id` 在该作用域根本不存在，于是每轮都 `startWatcher(undefined)`，在 `timers.has(entry.id)` 处抛 `TypeError`，被外层空 `catch {}` 吞掉，**一条守也挂不上且没有任何报错**。现在改用 `entry` 本身，并让单条守的挂载失败不连累其余守（失败原因写进该条的 `lastError`）。用例：预置含 enabled/paused 的 `watchers.json`，重新 `import` 并 `apply()` 后断言 enabled 的有 interval 定时器、paused 的没有。
 - **「重启后一次都没轮询」此前不可观测**。新增 `pollHealth()` 纯函数（`lib/watch.js`）作为面板 / `/state` / `watch_doctor` 的单一判据：`boot-miss`（`lastPoll` 早于本进程诞生且已过豁免期）、`stalled`（跑着跑着丢了）、`grace`（刚重启还没轮到）、`ok` / `never` / `paused`。doctor 现在会明确说「重启后还没轮询过 —— 启动挂载可能失败」，而不是误报成「定时器可能丢了」；判据以**真实进程诞生时刻**为准 —— 盘上的 `server.startedAt` 在启动挂载失败时根本不刷新（现场差了 24 小时），读它会把故障当成「刚重启」。
 - `/state` 与面板对停摆的守给提示（`boot-miss` 显示「重启后没跑起来」、`stalled` 显示「轮询停了」）。该字段是**可选**的：健康态整个字段不出现（缺省即健康），因为 20 条守的 `/state` 只剩约 0.5 KB 余量（preflight「面板请求体积」50 KB）；契约清单新增 `optional` 级别表达这类「只在特定状态出现、出现时名字固定」的字段。

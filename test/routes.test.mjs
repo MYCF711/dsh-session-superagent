@@ -2236,3 +2236,173 @@ test('重启后必须把 enabled 的守重新挂上定时器（启动段的 id �
     delete process.env.DSH_SUPERAGENT_OFFLINE
   }
 })
+
+// ─── PR 守：会话缺失必须走宽限期，不能立刻报错 ────────────────────────────
+//
+// 真机事故（2026-11-23）：`pr:MYCF711/dsh-session-superagent` 这条守所在会话
+// 只是**休眠**了（panel 里还在、标题是「监控对外pr」），宿主重启后 agents.get()
+// 拿不到它 —— issue 守有 `sessionMissingVerdict` 的 10 分钟宽限期，
+// **PR 守没有**：它直接把 wake 的 reason 写成 `lastError` 并 `bumpFailure`，
+// 面板立刻显示红色「异常」+「退避 459s」，用户以为守坏了。
+//
+// 判据：会话暂时不可见时应当「等待」而不是「报错」；只有连续超过宽限期
+// 才升级成错误（那才是「会话真的没了」）。
+test('PR 守：会话暂时不在宿主里时走宽限期，不立刻标成异常', async () => {
+  assertTempStateDir('PR 守会话宽限')
+  const dir = tempDir('zhuli-prgrace-')
+  const previousState = process.env.DSH_SUPERAGENT_STATE
+  const previousNoPoll = process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_STATE = dir
+  delete process.env.DSH_SUPERAGENT_NO_POLL
+  try {
+    const mod = await import('../lib/index.js?prgrace=' + Date.now())
+    const entry = {
+      id: 'pr:o/grace#session-grace',
+      repo: 'o/grace',
+      provider: 'github',
+      sessionId: 'session-grace',
+      kind: 'pr',
+      enabled: true,
+      intervalSec: 60,
+      // 一条“有评论的外来 PR”，保证这一轮真的会产生唤醒意图
+      seenComments: {},
+    }
+    mod.__test.writeState({ schemaVersion: 1, watchers: { [entry.id]: entry } })
+
+    // 会话不存在（宿主重启后休眠会话的典型形状）
+    const ctx = { agents: { get: () => undefined, currentInitiator: () => ({ id: 'session-grace' }) } }
+    // gh 返回一个外来 fork PR 带一条他人评论。
+    // 必须按**路径**分流：PR 列表走 graphql，评论走 REST issues/N/comments
+    // （seenId=0 时 pollPrOnce 会去 fetchAllIssueComments）。两者返回形状不同，
+    // 统一返回 GraphQL 形状会让评论解析失败 → 静默 continue → 用例变成空转（实测踩到）。
+    const prListBody = JSON.stringify({
+      data: {
+        search: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{
+            number: 136,
+            title: 't',
+            state: 'OPEN',
+            isDraft: false,
+            createdAt: '2026-11-20T00:00:00Z',
+            updatedAt: '2026-11-21T14:34:59Z',
+            url: 'https://github.com/o/grace/pull/136',
+            author: { login: 'stranger' },
+            labels: { nodes: [] },
+            assignees: { nodes: [] },
+            headRepository: { nameWithOwner: 'stranger/grace' },
+            baseRepository: { nameWithOwner: 'o/grace' },
+            comments: { nodes: [] },
+          }],
+        },
+      },
+    })
+    const commentBody = JSON.stringify([
+      { id: 7001, body: 'LGTM', created_at: '2026-11-21T14:34:59Z', user: { login: 'stranger' } },
+    ])
+    const ghRun = async (file, argv) => ({
+      code: 0,
+      stdout: String((argv || []).join(' ')).includes('/comments') ? commentBody : prListBody,
+      stderr: '',
+    })
+    const wakes = []
+    // wakeFn 如实模拟 `wake()` 在会话不存在时的返回
+    const wakeFn = (c, sessionId, text, onSettled) => {
+      wakes.push(sessionId)
+      onSettled({ ok: false, reason: '这个会话已经不在宿主里了 —— 宿主重启过，或这个会话被关掉了；面板里刷新一下，还在就重建这条主理鱼' })
+      return { ok: true, merged: true, pending: 1 }
+    }
+
+    // selfLogin 必须注入：否则会去跑真实的 `gh api user`（单测里会变成 60 秒超时）
+    await mod.__test.pollPrOnce(ctx, entry, 60_000, null, { ghRun, wake: wakeFn, selfLogin: 'me' })
+    await sleep(60)
+
+    const stored = mod.__test.readState().watchers[entry.id]
+    // 正向：确实尝试过唤醒（否则这条用例是空转）
+    assert.deepEqual(wakes, ['session-grace'], '这一轮应当尝试过唤醒，否则用例空转：' + JSON.stringify(wakes))
+    // 核心断言：首轮**不能**升级成 lastError
+    assert.equal(stored.lastError, null,
+      '会话暂时不可见的首轮不该写成异常：' + String(stored.lastError))
+    assert.equal(Number(stored.consecutiveFailures) || 0, 0,
+      '宽限期内不该累计失败次数（那会触发退避，用户看到「退避 459s」）')
+    assert.equal(stored.nextAt, null, '宽限期内不该安排退避')
+    assert.match(String(stored.lastDeferred || ''), /会话|宽限|就绪/,
+      '应当像 issue 守那样如实说明「会话还没就绪」：' + String(stored.lastDeferred))
+    // 宽限期的起点要记下来，下一轮才能算「等了多久」
+    assert.ok(stored.sessionMissingSince, '必须记下会话缺失的起始时刻，否则永远算不出等了多久')
+  } finally {
+    if (previousState === undefined) delete process.env.DSH_SUPERAGENT_STATE
+    else process.env.DSH_SUPERAGENT_STATE = previousState
+    if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
+    else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
+  }
+})
+
+// 反向用例：宽限期结束后必须真的报错 —— 否则「会话早就被删了」会被无限期当成
+// 「宿主刚启动，再等等」，客户永远等不到一条有用的提示。与上面那条配对。
+test('PR 守：会话超过宽限期仍找不到时，必须升级成错误', async () => {
+  assertTempStateDir('PR 守会话宽限到期')
+  const dir = tempDir('zhuli-prgrace2-')
+  const previousState = process.env.DSH_SUPERAGENT_STATE
+  const previousNoPoll = process.env.DSH_SUPERAGENT_NO_POLL
+  process.env.DSH_SUPERAGENT_STATE = dir
+  delete process.env.DSH_SUPERAGENT_NO_POLL
+  try {
+    const mod = await import('../lib/index.js?prgrace2=' + Date.now())
+    const { SESSION_MISSING_GRACE_MS } = await import('../lib/watch.js')
+    const entry = {
+      id: 'pr:o/gone#session-gone',
+      repo: 'o/gone',
+      provider: 'github',
+      sessionId: 'session-gone',
+      kind: 'pr',
+      enabled: true,
+      intervalSec: 60,
+      seenComments: {},
+      // 缺陷现场：超过宽限期仍未找到
+      sessionMissingSince: new Date(Date.now() - SESSION_MISSING_GRACE_MS - 5 * 60 * 1000).toISOString(),
+    }
+    mod.__test.writeState({ schemaVersion: 1, watchers: { [entry.id]: entry } })
+
+    const ctx = { agents: { get: () => undefined, currentInitiator: () => ({ id: 'session-gone' }) } }
+    const prListBody = JSON.stringify({
+      data: { search: { pageInfo: { hasNextPage: false }, nodes: [{
+        number: 137, title: 't', state: 'OPEN', isDraft: false,
+        createdAt: '2026-11-20T00:00:00Z', updatedAt: '2026-11-21T14:34:59Z',
+        url: 'https://github.com/o/gone/pull/137', author: { login: 'stranger' },
+        labels: { nodes: [] }, assignees: { nodes: [] },
+        headRepository: { nameWithOwner: 'stranger/gone' },
+        baseRepository: { nameWithOwner: 'o/gone' },
+        comments: { nodes: [] },
+      }] } },
+    })
+    const commentBody = JSON.stringify([
+      { id: 7002, body: 'x', created_at: '2026-11-21T14:34:59Z', user: { login: 'stranger' } },
+    ])
+    const ghRun = async (file, argv) => ({
+      code: 0,
+      stdout: String((argv || []).join(' ')).includes('/comments') ? commentBody : prListBody,
+      stderr: '',
+    })
+    const wakeFn = (c, sessionId, text, onSettled) => {
+      onSettled({ ok: false, reason: '这个会话已经不在宿主里了 —— 宿主重启过，或这个会话被关掉了；面板里刷新一下，还在就重建这条主理鱼' })
+      return { ok: true, merged: true, pending: 1 }
+    }
+
+    await mod.__test.pollPrOnce(ctx, entry, 60_000, null, { ghRun, wake: wakeFn, selfLogin: 'me' })
+    await sleep(60)
+
+    const stored = mod.__test.readState().watchers[entry.id]
+    // 否定式断言（不能只靠正则含「会话」—— 宽限文案也含）：
+    // 这里必须是一条**真正的错误**：有 lastError、进入退避、失败计数 +1。
+    assert.match(String(stored.lastError || ''), /会话已不在/,
+      '超过宽限期必须升级成错误：' + String(stored.lastError || stored.lastDeferred))
+    assert.ok(Number(stored.consecutiveFailures) >= 1, '超期失败要计入退避')
+    assert.ok(stored.nextAt, '超期失败要安排退避，别按 interval 无限重试')
+  } finally {
+    if (previousState === undefined) delete process.env.DSH_SUPERAGENT_STATE
+    else process.env.DSH_SUPERAGENT_STATE = previousState
+    if (previousNoPoll === undefined) delete process.env.DSH_SUPERAGENT_NO_POLL
+    else process.env.DSH_SUPERAGENT_NO_POLL = previousNoPoll
+  }
+})
