@@ -28,14 +28,14 @@
 
 | 资产 / 验证 | 当前结果 |
 |---|---|
-| 全量单测 | **1411/1411，exit 0**；证据 `dsh-sa-artifacts/session-ui-release-full-test-v2.log` 与最终 preflight |
+| 全量单测 | **1415/1415，exit 0**；证据 `dsh-sa-artifacts/session-ui-review-full-test.log` 与最终 preflight |
 | 房间边界 | **20/20 PASS**；UI audit **11/11** |
 | Outbox | 同进程单飞、跨进程租约、热重载共享 flush、不同 Ticket 排队、attempts 栅栏均有回归 |
 | 生产接线 | worker/inline、bot/系统事件、ack 操作 ID、watcher 世代、marker 分页、执行模式切换已定向复验 |
 | 草稿 | revision 乐观锁 + 旧值 409；前端保留另一标签页未保存文本 |
 | 隔离 preflight / 实例 | **exit 0：41 PASS + 3 个预期 SKIP**；`session-ui-release-preflight-v2.log`。profile 缺失/断链/陈旧均 0；2.0.0 headless 实例 `watch_start`、重挂 interval、12 工具通过 |
 | 双盲 Debug | task-13 A：**38/38，0 findings**；task-14 B：冻结旧版发现 High 4，当前已修停止确认、草稿恢复、详情/Session 导航与 worker 暂停；报告见 `blind-debug-a/REPORT.md`、`blind-debug-b/REPORT.md` |
-| UI | 新导航真实 Chromium **10/10，exit 0**；旧中栏缺席、会话隔离、全局新建、双主题与产品 700px 通过；`session-ui-interactive-release/`。**本轮 UI 尚未获用户整版确认，未推送** |
+| UI | 新导航真实 Chromium **18/18，exit 0**；旧中栏缺席、会话隔离、全局新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过；`session-ui-review-final-v3/`。**本轮 UI 尚未获用户整版确认，未推送** |
 | headless | 无 `webServer` 实例 `watch_start`、重新 import/apply、interval 恢复通过；单守异常不连累好守，`lastError` 落盘有回归 |
 | 双盲修正 | 正常退避/时段外不误报；长期 never、enabled 兼容、optional 缺 stable、异常筛选/Orbit/按仓库错误点均有反向用例；双主题预览含错误点 |
 

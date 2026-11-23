@@ -13,9 +13,11 @@
 
 ### Changed
 
-- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1411/1411、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 10/10；两组双盲和用户整版确认仍是发布门。
+- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1415/1415、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 18/18；核心双盲零发现，UI 双盲发现已修复，用户整版确认仍是发布门。
 
 ### Fixed
+
+- **双盲 UI 复核**：会话头部按 Forge 接入 `sidebarRight.view` 订阅、`aria-pressed` 与同 Session 同 kind `hide/toggle`，缺 `sidebarRightTabs.register` 不再显示假可用入口；官方 forwardRef Button + Tooltip 的 hover/pin/Escape 与键盘路径通过。700px 选中页签的中间帧问题改为等待真实主题动画结束，稳态继续使用官方 token，未新增颜色或提高基线。
 
 - **headless / 宿主重启后守不再轮询**：吸收 @iJetLi 在上游 #68 的启动修复，`apply()` 改用当前 `entry` 挂载，单条守异常不再阻断其余守；无 `webServer` 的实例也能恢复 interval。补充 `pollHealth()` 与 `boot-miss/stalled/grace/ok/never/paused` 判据，`watch_doctor` 区分启动挂载失败和运行中停滞；`/state`、`watch_status` 和面板只在异常时输出可选 `poll` 字段，健康态不占轮询体积。
 - **双盲审查修正健康语义与 UI 一致性**：正常 `nextAt` 退避、`deferReason`、活跃时段外不误报停摆；`enabled` 与调度器共用判据；新守按 `createdAt` 豁免首轮，超龄无首轮才报 boot-miss；optional 校验继续拒绝缺 stable 和未知字段。停摆守进入异常/问题筛选、Orbit 错误态与按仓库错误点，不再一面报停、一面显示主理中。
