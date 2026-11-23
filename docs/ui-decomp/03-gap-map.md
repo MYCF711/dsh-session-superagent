@@ -4,6 +4,15 @@
 >
 > 本文件只做静态只读核对与后续实施清单；本次没有改 `client.js`、没有启动 GUI、没有 commit。
 
+## 实施回写（2.0.0 · 双盲 UI 对照问题修复）
+
+- **官方**：Forge `HeaderButton.tsx:47-66` 用 DSH Tooltip + Button、`aria-pressed` 和可见性事实；`mount.ts:376-385` 在未显示时 `openTab(kind)`，已显示时只对当前 Session 的同 kind tab 调用 `hide(tab.id)`。
+- **我们**：头部订阅 `sidebarRight.view`，从 `tabsIn(sessionId)` 取同 kind 可见 tab，Enter/Space 与鼠标共用 open/hide toggle；缺 `view.subscribe/tabsIn/hide` 时保持 open-only，不伪造 pressed。头部同时检查 `sidebarRight.openTab` 与 `sidebarRightTabs.register`，缺 definition 服务即禁用并说明原因。提示优先使用安装版 DSH Tooltip + 官方 forwardRef Button，缺少任一能力才回退本地 Btn + `title`。
+- **为什么对齐官方**：同一事实源驱动按钮状态与真实右栏可见性，避免把 open 调用次数误当展开状态；能力缺失仅去掉 toggle，不牺牲原有 open 入口，也没有新增自制浮层。
+- **M1 computed 结论**：700px 深色异常帧的文本矩形为 28×19、`visibility:visible`、`opacity:1`、命中自身，排除裁剪和遮罩。选中规则始终是官方 `color:var(--dsw-alias-label-primary)`；异常采样时 color/text-fill 为 rgb(15,17,21)，等待真实 `animation.finished` 后为 rgb(249,250,251)，文字恢复。根因是主题切换的 `color 0.18s` 过渡中截图，稳态产品 CSS/token 无缺陷；只修验收脚本等待真实动画完成，未新增颜色、尺寸魔数或提高对比度基线。
+- **回归**：`modular-ui` 增加 pressed/toggle、open-only、M3 与 Tooltip fallback 用例；真实 Chromium 补头部 hover Tooltip、pin/Escape、Enter/Space/二次 hide、两容器 tabs 方向键/Home/End、700px 两容器双主题当前页签 token/文本矩形与无横向溢出矩阵。
+- **验证**：定向 `client + modular-ui + update-ui + ui-l84-tooltip` **287/287**，UI audit **11/11**；真实 Chromium `156.0.8078.96` **18/18**，最终证据 `tmp-artifacts/task-28-final5/summary.json`，8 张截图同目录（含 `global/session-700-light/dark.png`）。宿主与 API 仍为 fixture；真实 DSH WebView、读屏、触摸、IME 和用户整版确认保持未验，不推送。
+
 ## 实施回写（2.0.0 · 旧中栏退出）
 
 - **官方**：全局管理页使用 `main[key]` + `sidebar.panellist[id]`，当前 Session 工作台使用 header utility、右栏 definition 与 keyed body/title；`conversation.view` 只属于对话中栏视图环。

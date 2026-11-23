@@ -476,7 +476,7 @@ const sessionSectionsForTheme = sessionShown.map((scenario) => {
 }).join('')
 
 const headerSection = (() => {
-  hookQueue = [null]
+  hookQueue = [null, false]
   hookIndex = 0
   const tree = HeaderUtility({ sessionId: 's1' })
   return '<h2 class="preview-title">会话头部入口</h2><div class="preview-frame">' + render(tree) + '</div>'

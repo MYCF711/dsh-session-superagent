@@ -376,6 +376,7 @@ window.__ModuleLoader__.load({
     let hostPill = null
     let hostCollapsibleRow = null
     let hostTooltip = null
+    let hostTooltipPrimitive = null
     let hostOrbit = null
     let hostOrbitRow = null
     try {
@@ -397,6 +398,8 @@ window.__ModuleLoader__.load({
       hostPill = primitives.Pill || null
       // 仅供 CollapsibleList：WatcherForm 高级区需要 bodyId/aria-controls，必须继续走本地 DisclosureRow。
       hostCollapsibleRow = primitives.DisclosureRow || null
+      // 头部入口直接复用官方 Tooltip 包装 Button；InfoTip 适配器只服务它自己的问号 trigger。
+      hostTooltipPrimitive = primitives.Tooltip || null
       if (primitives && primitives.Modal && primitives.Toast && primitives.IconWarningOutlineMedium) {
         hostUi = createHostUi({ React, primitives })
         // Tooltip 独立探测：缺少它只回退 InfoTip，不把已接入的 Modal/Toast 一起降级。
@@ -414,6 +417,7 @@ window.__ModuleLoader__.load({
       hostPill = null
       hostCollapsibleRow = null
       hostTooltip = null
+      hostTooltipPrimitive = null
     }
 
     // Orbit 独立探测：容器用官方 MenuSurface，watcher 行用官方 DisclosureRow。
@@ -444,11 +448,23 @@ window.__ModuleLoader__.load({
     const RIGHT_TAB_ID = 'dsh-session-superagent/session'
     const RIGHT_TAB_KIND = 'sessionSuperagent'
     const RIGHT_TAB_UNAVAILABLE = '宿主 sidebarRight.openTab 服务不存在'
+    const RIGHT_TAB_DEFINITION_UNAVAILABLE = '宿主 sidebarRightTabs.register 服务不存在'
     const HEADER_UTILITY_ID = 'session-superagent-current'
     let hostLayout = null
     let hostSidebarRight = null
     let hostSidebarRightTabs = null
     let hostSessions = null
+
+    function canToggleSessionRightTab() {
+      return Boolean(hostSidebarRight
+        && hostSidebarRight.view && typeof hostSidebarRight.view.subscribe === 'function'
+        && typeof hostSidebarRight.tabsIn === 'function' && typeof hostSidebarRight.hide === 'function')
+    }
+    function visibleSessionRightTab(sessionId) {
+      if (!canToggleSessionRightTab()) return null
+      const tabs = hostSidebarRight.tabsIn(sessionId) || []
+      return tabs.find((tab) => tab && tab.kind === RIGHT_TAB_KIND && tab.visible !== false) || null
+    }
 
     function optionalHostService(ctx, name) {
       try {
@@ -5446,28 +5462,46 @@ window.__ModuleLoader__.load({
 
     function SuperagentHeaderUtility(props = {}) {
       const [error, setError] = useState(null)
+      const [pressed, setPressed] = useState(() => Boolean(visibleSessionRightTab(props.sessionId)))
+      useEffect(() => {
+        if (!canToggleSessionRightTab()) return undefined
+        const update = () => setPressed(Boolean(visibleSessionRightTab(props.sessionId)))
+        const unsubscribe = hostSidebarRight.view.subscribe(update)
+        update()
+        return typeof unsubscribe === 'function' ? unsubscribe : undefined
+      }, [props.sessionId])
       const unavailable = !props.sessionId
         ? '当前头部 slot 没有 sessionId'
         : !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
           ? RIGHT_TAB_UNAVAILABLE
-          : null
-      const open = async () => {
+          : !hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function'
+            ? RIGHT_TAB_DEFINITION_UNAVAILABLE
+            : null
+      const toggle = async () => {
         if (unavailable) return
         try {
-          await openSessionSuperagentTab()
+          const tab = pressed ? visibleSessionRightTab(props.sessionId) : null
+          if (tab) await hostSidebarRight.hide(tab.id)
+          else await openSessionSuperagentTab()
           setError(null)
         } catch (failure) {
           setError(String((failure && failure.message) || failure))
         }
       }
       const label = '本会话的主理鱼'
+      const tip = unavailable || label
+      // DSH Tooltip 要把 ref 合并到真实 trigger；本地 Btn 是普通函数，不能接住 ref。
+      // 两个能力同时存在时直接用官方 forwardRef Button，缺任一项就显式回退 title。
+      const useHostTooltip = Boolean(hostTooltipPrimitive && hostButton)
+      const button = h(useHostTooltip ? hostButton : Btn, {
+        type: 'button', variant: 'toolbar', size: 'sm', icon: h(SuperagentNavIcon),
+        'aria-label': label, 'aria-pressed': pressed,
+        title: useHostTooltip ? undefined : tip,
+        disabled: Boolean(unavailable), onClick: toggle,
+      })
       return h(React.Fragment, null,
-        h(Btn, {
-          variant: 'toolbar', size: 'sm', icon: h(SuperagentNavIcon),
-          'aria-label': label, title: unavailable || label,
-          disabled: Boolean(unavailable), onClick: open,
-        }),
-        error ? h('span', { className: 'dt-error', role: 'alert' }, '打开右栏失败：' + error) : null)
+        useHostTooltip ? h(hostTooltipPrimitive, { label: tip, side: 'bottom', openOnClick: true }, button) : button,
+        error ? h('span', { className: 'dt-error', role: 'alert' }, '切换右栏失败：' + error) : null)
     }
 
     function SuperagentRightTabTitle() {

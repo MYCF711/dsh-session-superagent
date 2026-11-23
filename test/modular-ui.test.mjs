@@ -10,17 +10,36 @@ const RIGHT_TAB_ID = 'dsh-session-superagent/session'
 const RIGHT_TAB_KIND = 'sessionSuperagent'
 
 function navigationFixture() {
-  const calls = { selectPanel: [], openTab: [], definitions: [] }
+  const calls = { selectPanel: [], openTab: [], hide: [], definitions: [] }
+  const tabs = []
+  const listeners = new Set()
+  const emit = () => { for (const listener of [...listeners]) listener() }
   const sessionCatalog = { phase: 'ready', byId: { 'session-a': { title: '会话 A' }, 'session-b': { title: '会话 B' } } }
   const services = {
     layout: { selectPanel: (id) => { calls.selectPanel.push(id) } },
-    sidebarRight: { openTab: (...args) => { calls.openTab.push(args) } },
+    sidebarRight: {
+      openTab: (...args) => {
+        calls.openTab.push(args)
+        const existing = tabs.find((tab) => tab.sessionId === 'session-a' && tab.kind === RIGHT_TAB_KIND)
+        if (existing) existing.visible = true
+        else tabs.push({ id: 'session-tab', sessionId: 'session-a', kind: RIGHT_TAB_KIND, visible: true })
+        emit()
+      },
+      view: { subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } } },
+      tabsIn: (sessionId) => tabs.filter((tab) => tab.sessionId === sessionId),
+      hide: (id) => {
+        calls.hide.push(id)
+        const tab = tabs.find((item) => item.id === id)
+        if (tab) tab.visible = false
+        emit()
+      },
+    },
     sidebarRightTabs: {
       register: (definition) => { calls.definitions.push(definition); return () => {} },
     },
     sessions: { list: { getSnapshot: () => sessionCatalog }, refresh: async () => {} },
   }
-  return { calls, services }
+  return { calls, services, tabs, emit }
 }
 
 function registered(client, name, key) {
@@ -492,7 +511,7 @@ test('会话头部与 Dock/Orbit 都只按 kind 打开当前 sessionId 的右栏
   const { calls, services } = navigationFixture()
   const client = loadClient({ services })
   const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
-  const headerNodes = walk(client.render(header, [null], { sessionId: 'session-a' }))
+  const headerNodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
   const headerButton = headerNodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
   assert.ok(headerButton)
   assert.equal(flatText(headerNodes).includes('主理鱼'), false, '头部 utility 只渲染图标，文字留在 aria-label/title')
@@ -507,13 +526,97 @@ test('会话头部与 Dock/Orbit 都只按 kind 打开当前 sessionId 的右栏
   assert.equal(calls.openTab.flat().some((value) => String(value).includes('sidebar://')), false)
 })
 
+test('会话头部订阅 sidebarRight.view，pressed 后对当前 Session 同 kind 页签二次 hide/toggle', async () => {
+  const { calls, services, tabs } = navigationFixture()
+  tabs.push({ id: 'other-kind', sessionId: 'session-a', kind: 'other', visible: true })
+  const client = loadClient({ services })
+  const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
+  const renderHeader = (visible) => walk(client.render(header, [null, visible], { sessionId: 'session-a' }))
+  const headerButton = (nodes) => nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+
+  let nodes = renderHeader(false)
+  assert.equal(headerButton(nodes).props['aria-pressed'], false)
+  const cleanups = client.runEffects()
+  assert.equal(cleanups.length, 1, '能力完整时必须真正订阅 sidebarRight.view')
+  await headerButton(nodes).props.onClick()
+  assert.deepEqual(calls.openTab, [[RIGHT_TAB_KIND]])
+  assert.ok(client.stateCalls().some((call) => call.index === 1 && call.next === true), 'view 发布后 pressed 必须同步')
+
+  nodes = renderHeader(true)
+  assert.equal(headerButton(nodes).props['aria-pressed'], true)
+  await headerButton(nodes).props.onClick()
+  assert.deepEqual(calls.hide, ['session-tab'], '不得 hide 其它 kind 或其它 Session')
+  assert.equal(calls.openTab.length, 1, '二次点击是 hide，不是再次 open')
+
+  nodes = renderHeader(false)
+  await headerButton(nodes).props.onClick()
+  assert.equal(calls.openTab.length, 2, 'hide 后再次点击恢复 open/reveal')
+  for (const cleanup of cleanups) cleanup()
+})
+
+test('sidebarRight.view/tabsIn/hide 能力缺失时头部明确保持 open-only', async () => {
+  const { calls, services } = navigationFixture()
+  services.sidebarRight = { openTab: (...args) => { calls.openTab.push(args) } }
+  const client = loadClient({ services })
+  const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props['aria-pressed'], false)
+  assert.equal(trigger.props.disabled, false)
+  assert.equal(client.runEffects().length, 0, '没有 view.subscribe 时不伪造可见性订阅')
+  await trigger.props.onClick()
+  await trigger.props.onClick()
+  assert.deepEqual(calls.openTab, [[RIGHT_TAB_KIND], [RIGHT_TAB_KIND]])
+  assert.deepEqual(calls.hide, [])
+})
+
+test('缺 sidebarRightTabs.register 时头部禁用并解释 definition 未注册', () => {
+  const { services } = navigationFixture()
+  delete services.sidebarRightTabs
+  const client = loadClient({ services })
+  const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props.disabled, true)
+  assert.match(trigger.props.title, /sidebarRightTabs\.register 服务不存在/)
+})
+
+test('头部优先复用官方 Tooltip，缺原语才回退原生 title', () => {
+  const { services } = navigationFixture()
+  const Tooltip = function HostTooltip() {}
+  const Button = function HostButton() {}
+  const client = loadClient({ services, primitives: { Tooltip, Button } })
+  const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
+  const tree = client.render(header, [null, false], { sessionId: 'session-a' })
+  const tooltip = tree.props.children[0]
+  assert.equal(tooltip.type, Tooltip)
+  assert.equal(tooltip.props.label, '本会话的主理鱼')
+  assert.equal(tooltip.props.side, 'bottom')
+  assert.equal(tooltip.props.openOnClick, true)
+  const trigger = tooltip.props.children[0]
+  assert.equal(trigger.props['aria-pressed'], false)
+  assert.equal(trigger.props.title, undefined, '官方 Tooltip 路径不再重复原生 title')
+
+  const fallback = loadClient({ services })
+  const fallbackHeader = registered(fallback, 'conversation.session.header.utilities', 'session-superagent-current')
+  const fallbackNodes = walk(fallback.render(fallbackHeader, [null, false], { sessionId: 'session-a' }))
+  const fallbackTrigger = fallbackNodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(fallbackTrigger.props.title, '本会话的主理鱼')
+
+  const withoutButton = loadClient({ services, primitives: { Tooltip } })
+  const withoutButtonHeader = registered(withoutButton, 'conversation.session.header.utilities', 'session-superagent-current')
+  const withoutButtonNodes = walk(withoutButton.render(withoutButtonHeader, [null, false], { sessionId: 'session-a' }))
+  const withoutButtonTrigger = withoutButtonNodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(withoutButtonTrigger.props.title, '本会话的主理鱼', '只有 Tooltip、没有 forwardRef Button 时必须显式回退')
+})
+
 test('宿主服务缺失时头部明确禁用，Dock 显示旧操作列表降级原因', () => {
   const { services } = navigationFixture()
   delete services.sidebarRight
   delete services.sidebarRightTabs
   const client = loadClient({ services })
   const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
-  const headerNodes = walk(client.render(header, [null], { sessionId: 'session-a' }))
+  const headerNodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
   const headerButton = headerNodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
   assert.equal(headerButton.props.disabled, true)
   assert.match(headerButton.props.title, /sidebarRight\.openTab 服务不存在/)

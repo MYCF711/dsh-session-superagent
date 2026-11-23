@@ -15,7 +15,7 @@ const SESSION_A = 'session-a'
 const SESSION_B = 'session-b'
 const GLOBAL_PANEL = 'session-superagent'
 const RIGHT_KIND = 'sessionSuperagent'
-const SPACE_NAME = 'dsh-session-ui-task-22'
+const SPACE_NAME = 'dsh-session-ui-task-28'
 const results = []
 const apiLog = []
 const screenshots = []
@@ -142,7 +142,7 @@ window.__captureErrors = [];
 window.__networkViolations = [];
 window.__registrations = {};
 window.__definitions = [];
-window.__navigationCalls = { selectPanel: [], openTab: [] };
+window.__navigationCalls = { selectPanel: [], openTab: [], hide: [] };
 window.__ModuleLoader__ = {
   create(options) { window.__capturedModules = options.staticModules; window.__captured = true; throw new Error('intentional-capture-stop'); },
   load(options) { window.__clientFactory = options.factory; window.__clientCaptured = true; },
@@ -191,17 +191,34 @@ try {
   const plugin = window.__clientFactory(localRequire);
   const nav = { panel: null, right: false, sessionId: ${JSON.stringify(SESSION_A)} };
   const listeners = new Set();
+  const viewListeners = new Set();
+  const rightTabs = [{ id:'other-kind', sessionId:${JSON.stringify(SESSION_A)}, kind:'other', visible:true }];
   const emit = () => { for (const fn of listeners) fn(); };
+  const publishRight = () => { emit(); for (const fn of [...viewListeners]) fn(); };
   const catalog = { phase:'ready', byId:{ ${JSON.stringify(SESSION_A)}:{title:'当前项目会话'}, ${JSON.stringify(SESSION_B)}:{title:'目标项目会话'} } };
   const services = {
     layout: { selectPanel(id) {
       if (id !== null && id !== ${JSON.stringify(GLOBAL_PANEL)}) throw new Error('未知 panel：' + id);
       window.__navigationCalls.selectPanel.push(id); nav.panel = id; emit();
     } },
-    sidebarRight: { openTab(kind) {
-      if (kind !== ${JSON.stringify(RIGHT_KIND)}) throw new Error('未知 right kind：' + kind);
-      window.__navigationCalls.openTab.push([kind]); nav.right = true; emit();
-    } },
+    sidebarRight: {
+      openTab(kind) {
+        if (kind !== ${JSON.stringify(RIGHT_KIND)}) throw new Error('未知 right kind：' + kind);
+        window.__navigationCalls.openTab.push([kind]);
+        const existing = rightTabs.find((tab) => tab.sessionId === nav.sessionId && tab.kind === kind);
+        if (existing) existing.visible = true;
+        else rightTabs.push({id:'session-tab',sessionId:nav.sessionId,kind,visible:true});
+        nav.right = true; publishRight();
+      },
+      view: { subscribe(listener) { viewListeners.add(listener); return () => viewListeners.delete(listener); } },
+      tabsIn(sessionId) { return rightTabs.filter((tab) => tab.sessionId === sessionId); },
+      hide(id) {
+        window.__navigationCalls.hide.push(id);
+        const tab = rightTabs.find((item) => item.id === id && item.sessionId === nav.sessionId);
+        if (!tab) throw new Error('未知 right tab：' + id);
+        tab.visible = false; nav.right = false; publishRight();
+      },
+    },
     sidebarRightTabs: { register(definition) { window.__definitions.push(definition); return () => {}; } },
     sessions: { list:{getSnapshot:() => catalog}, refresh:async () => {} },
     uiWorkspace: { openSession(id) { nav.sessionId = id; emit(); } },
@@ -238,11 +255,12 @@ try {
           React.createElement('header',{className:'harness-header'},React.createElement('strong',null,'当前项目会话 · ' + nav.sessionId),React.createElement(header.Component,{sessionId:nav.sessionId})),
           React.createElement('div',{className:'harness-conversation'},'Conversation fixture'))),
       nav.right ? React.createElement('aside',{id:'right-panel',className:'harness-right','data-session-id':nav.sessionId},
-        React.createElement('div',{className:'harness-right-title'},React.createElement(title.Component),React.createElement('button',{id:'right-hide',onClick:() => {nav.right=false;emit();}},'收起')),
+        React.createElement('div',{className:'harness-right-title'},React.createElement(title.Component),React.createElement('button',{id:'right-hide',onClick:() => services.sidebarRight.hide('session-tab')},'收起')),
         React.createElement('div',{className:'harness-right-body'},React.createElement(right.Component,{sessionId:nav.sessionId}))) : null);
   }
   ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(HostApp));
-  window.__getNavigation = () => ({ panel:nav.panel, right:nav.right, sessionId:nav.sessionId });
+  window.__getNavigation = () => ({ panel:nav.panel, right:nav.right, sessionId:nav.sessionId,
+    tabs:rightTabs.map((tab) => ({id:tab.id,sessionId:tab.sessionId,kind:tab.kind,visible:tab.visible})) });
   window.__harnessReady = true;
 } catch (error) { window.__harnessError = String(error && error.stack || error); throw error; }
 `
@@ -327,6 +345,14 @@ async function theme(dark) {
     else document.body.removeAttribute('data-ds-dark-theme')
     document.documentElement.style.colorScheme = value ? 'dark' : 'light'
   }, dark)
+  // 主题 token 立即变化，但官方 SegmentedTabs 的 color/indicator 有过渡；等待真实动画完成，
+  // 不能用固定毫秒把半浅半深的中间帧当成产品稳态缺陷。
+  await page.evaluate(async () => {
+    const nodes = [...document.querySelectorAll("[role='tablist']")]
+      .flatMap((root) => [root, ...root.querySelectorAll('*')])
+    const animations = nodes.flatMap((node) => node.getAnimations())
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)))
+  })
 }
 async function openGlobal() {
   await page.click('#nav-global')
@@ -345,6 +371,110 @@ async function measure(selector) {
       rootOverflow:node ? node.scrollWidth > node.clientWidth + 1 : null,
       clientWidth:node?.clientWidth, scrollWidth:node?.scrollWidth }
   }, selector)
+}
+async function inspectTabs(container) {
+  return page.evaluate((sel) => [...document.querySelectorAll(sel + " [role='tab']")].map((node) => {
+    const style = getComputedStyle(node)
+    const rect = node.getBoundingClientRect()
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const textRect = range.getBoundingClientRect()
+    const x = textRect.left + textRect.width / 2
+    const y = textRect.top + textRect.height / 2
+    const hit = textRect.width > 0 && textRect.height > 0 ? document.elementFromPoint(x, y) : null
+    const styleKeys = ['color','backgroundColor','display','visibility','opacity','overflow','fontSize','fontWeight','textIndent','clipPath','filter','mixBlendMode','transform','zIndex','boxShadow','webkitTextFillColor','webkitTextStrokeColor']
+    const pseudo = ['::before','::after'].map((name) => {
+      const value = getComputedStyle(node, name)
+      return {name,content:value.content,style:Object.fromEntries(styleKeys.map((key) => [key,value[key]]))}
+    })
+    const ancestors = []
+    for (let parent = node.parentElement; parent && ancestors.length < 4; parent = parent.parentElement) {
+      const parentStyle = getComputedStyle(parent)
+      ancestors.push({tag:parent.tagName,id:parent.id,class:parent.getAttribute('class'),
+        style:Object.fromEntries(styleKeys.map((key) => [key,parentStyle[key]])),
+        pseudo:['::before','::after'].map((name) => {
+          const value = getComputedStyle(parent, name)
+          return {name,content:value.content,style:Object.fromEntries(styleKeys.map((key) => [key,value[key]]))}
+        })})
+    }
+    const matchedRules = []
+    if (node.getAttribute('aria-selected') === 'true') {
+      const visit = (rules, conditions = []) => {
+        for (const rule of rules) {
+          if (rule.selectorText) {
+            let matches = false
+            try { matches = node.matches(rule.selectorText) } catch {}
+            if (matches) matchedRules.push({selector:rule.selectorText,conditions,cssText:rule.cssText})
+          }
+          if (rule.cssRules) visit(rule.cssRules, [...conditions, rule.conditionText || rule.name || rule.type])
+        }
+      }
+      for (const sheet of document.styleSheets) {
+        try { visit(sheet.cssRules) } catch {}
+      }
+    }
+    return {
+      id:node.id, text:node.textContent, selected:node.getAttribute('aria-selected'), html:node.outerHTML,
+      rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+      textRect:{x:textRect.x,y:textRect.y,width:textRect.width,height:textRect.height},
+      style:Object.fromEntries(styleKeys.map((key) => [key,style[key]])),
+      hit:hit ? {tag:hit.tagName,id:hit.id,class:hit.getAttribute('class'),text:hit.textContent} : null,
+      pseudo, ancestors, matchedRules,
+      children:[...node.children].map((child) => {
+        const childStyle = getComputedStyle(child)
+        const childRect = child.getBoundingClientRect()
+        return {tag:child.tagName,class:child.getAttribute('class'),text:child.textContent,
+          rect:{x:childRect.x,y:childRect.y,width:childRect.width,height:childRect.height},
+          style:Object.fromEntries(styleKeys.map((key) => [key,childStyle[key]]))}
+      }),
+    }
+  }), container)
+}
+async function waitHeader(pressed) {
+  await page.waitForFunction((expected) => {
+    const button = document.querySelector("button[aria-label='本会话的主理鱼']")
+    return button?.getAttribute('aria-pressed') === String(expected)
+      && Boolean(document.querySelector('#right-panel')) === expected
+  }, pressed, {timeout:10000})
+}
+async function exerciseTabs(container) {
+  const sequence = [
+    ['ArrowRight','sa-main-tab-judge'], ['ArrowLeft','sa-main-tab-overview'],
+    ['End','sa-main-tab-settings'], ['Home','sa-main-tab-overview'],
+    ['ArrowLeft','sa-main-tab-settings'], ['ArrowRight','sa-main-tab-overview'],
+  ]
+  await page.focus(container + ' #sa-main-tab-overview')
+  const actual = []
+  for (const [key,id] of sequence) {
+    await page.keyboard.press(key)
+    await page.waitForFunction(({root,expected}) => document.activeElement?.id === expected
+      && document.querySelector(root + ' #' + expected)?.getAttribute('aria-selected') === 'true',
+    {root:container,expected:id}, {timeout:6000})
+    actual.push([key,await page.evaluate(() => document.activeElement?.id)])
+  }
+  check(container + ' tabs ArrowLeft/ArrowRight/Home/End 与焦点跟随', true, actual)
+}
+async function tabVisibility(container) {
+  return page.evaluate((root) => {
+    const selected = document.querySelector(root + " [role='tab'][aria-selected='true']")
+    if (!selected) return {missing:true}
+    const range = document.createRange()
+    range.selectNodeContents(selected)
+    const rect = range.getBoundingClientRect()
+    const style = getComputedStyle(selected)
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--dsw-alias-label-primary)'
+    document.body.appendChild(probe)
+    const expectedColor = getComputedStyle(probe).color
+    probe.remove()
+    const indicator = [...selected.parentElement.children].find((node) => String(node.className).includes('indicator'))
+    return {
+      id:selected.id,text:selected.textContent,rect:{width:rect.width,height:rect.height},
+      color:style.color,textFill:style.webkitTextFillColor,expectedColor,
+      visibility:style.visibility,opacity:style.opacity,
+      indicatorBackground:indicator ? getComputedStyle(indicator).backgroundColor : null,
+    }
+  }, container)
 }
 
 try {
@@ -374,6 +504,81 @@ try {
     && registration.headerText === '' && registration.headerSvg, registration)
   check('旧 session-superagent-desk/conversation.view 中栏缺席', !registration.keys.includes('conversation.view#session-superagent-desk'), registration.keys)
 
+  const headerSelector = "button[aria-label='本会话的主理鱼']"
+  const initialHeader = await page.evaluate((selector) => ({
+    pressed:document.querySelector(selector)?.getAttribute('aria-pressed'),
+    title:document.querySelector(selector)?.getAttribute('title'),
+  }), headerSelector)
+  check('头部初始 aria-pressed=false 且官方 Tooltip 路径无 title', initialHeader.pressed === 'false' && initialHeader.title === null, initialHeader)
+  let tooltipOpened = false
+  let tooltipDiagnostic = null
+  try {
+    await page.hover(headerSelector, {label:'查看头部官方 Tooltip'})
+    await page.waitForFunction((selector) => {
+      const trigger = document.querySelector(selector)
+      const id = trigger?.getAttribute('aria-describedby')
+      const described = id ? document.getElementById(id) : null
+      const candidates = [...document.querySelectorAll("[role='tooltip'], [data-pinned]")]
+      const bubble = described || candidates.find((node) => node.textContent?.trim() === '本会话的主理鱼')
+      const style = bubble ? getComputedStyle(bubble) : null
+      return Boolean(bubble && style.display !== 'none' && style.visibility === 'visible')
+    }, headerSelector, {timeout:3000})
+    tooltipOpened = true
+  } catch (error) {
+    tooltipDiagnostic = await page.evaluate(({selector,message}) => ({
+      trigger:document.querySelector(selector)?.outerHTML,
+      active:document.activeElement?.outerHTML,
+      describedBy:document.querySelector(selector)?.getAttribute('aria-describedby'),
+      candidates:[...document.querySelectorAll("[role='tooltip'], [data-pinned]")].map((node) => node.outerHTML),
+      bodyTail:document.body.innerHTML.slice(-3000),
+      error:message,
+    }), {selector:headerSelector,message:String(error && error.message || error)})
+  }
+  check('头部 hover 显示安装版 DSH Tooltip', tooltipOpened, tooltipDiagnostic)
+  observe('头部 Tooltip 真实 DOM', tooltipDiagnostic || {opened:true})
+  let tooltipDismissed = false
+  if (tooltipOpened) {
+    // 与既有官方 Tooltip 验收一致：click pin 后移出仍应保持，再验证 Escape 真正关闭。
+    await page.click(headerSelector)
+    await waitHeader(true)
+    await page.mouse.move(20, 200, {label:'移出已固定头部 Tooltip'})
+    await page.keyboard.press('Escape')
+    try {
+      await page.waitForFunction((selector) => {
+        const trigger = document.querySelector(selector)
+        const id = trigger?.getAttribute('aria-describedby')
+        const described = id ? document.getElementById(id) : null
+        const candidates = [...document.querySelectorAll("[role='tooltip'], [data-pinned]")]
+        const bubble = described || candidates.find((node) => node.textContent?.trim() === '本会话的主理鱼')
+        if (!bubble) return true
+        const style = getComputedStyle(bubble)
+        return style.display === 'none' || style.visibility !== 'visible'
+      }, headerSelector, {timeout:3000})
+      tooltipDismissed = true
+    } catch {}
+  }
+  check('头部 Tooltip Escape 键盘关闭', tooltipDismissed)
+  if (await page.evaluate(() => Boolean(document.querySelector('#right-hide')))) {
+    await page.click('#right-hide')
+    await waitHeader(false)
+  }
+  // Tooltip pin/Escape 的 open/hide 已独立验证；清零 fixture 调用，隔离后面的 Enter/Space 计数。
+  await page.evaluate(() => {
+    window.__navigationCalls.openTab.length = 0
+    window.__navigationCalls.hide.length = 0
+  })
+
+  await page.focus(headerSelector)
+  const keyboardHeader = []
+  for (const [key,pressed] of [['Enter',true],['Enter',false],['Space',true],['Space',false]]) {
+    await page.keyboard.press(key)
+    await waitHeader(pressed)
+    keyboardHeader.push([key,pressed])
+  }
+  const headerCalls = await page.evaluate(() => window.__navigationCalls)
+  check('头部 Enter/Space 开关与二次 hide 都同步 aria-pressed', headerCalls.openTab.length === 2
+    && JSON.stringify(headerCalls.hide) === JSON.stringify(['session-tab','session-tab']), {keyboardHeader,headerCalls})
+
   await openRight()
   const right = await page.evaluate(() => ({sessionId:document.querySelector('#right-panel')?.getAttribute('data-session-id'),
     repos:[...document.querySelectorAll('#right-panel .dt-open')].map((node) => node.textContent),
@@ -389,10 +594,14 @@ try {
   await page.click('#right-hide')
   await openGlobal()
   const globalReadStart = apiLog.length
-  await page.click("#global-panel [role='tab']:text-is(\"触发\")")
+  await page.evaluate(() => [...document.querySelectorAll("#global-panel [role='tab']")].find((node) => node.textContent === '触发')?.scrollIntoView({block:'center',inline:'nearest'}))
+  await page.focus("#global-panel [role='tab']:text-is(\"触发\")")
+  await page.keyboard.press('Enter')
   await page.selectOption("#global-panel select[aria-label='目标会话']", SESSION_B)
   await page.fill('#global-panel #watcher-new-repo', 'fixture/from-global')
-  await page.click("#global-panel button[aria-label='添加到所选会话']")
+  await page.evaluate(() => document.querySelector("#global-panel button[aria-label='添加到所选会话']")?.scrollIntoView({block:'center',inline:'nearest'}))
+  await page.focus("#global-panel button[aria-label='添加到所选会话']")
+  await page.keyboard.press('Enter')
   const created = await waitFor(() => apiLog.find((row) => row.method === 'POST' && row.path === '/session-superagent/watch' && row.body.includes('fixture/from-global')))
   await page.waitForFunction(() => document.querySelector('#global-panel #watcher-new-repo')?.value === '', undefined, {timeout:6000})
   const globalReads = apiLog.slice(globalReadStart).filter((row) => row.method === 'GET' && row.path.startsWith('/session-superagent/state'))
@@ -418,18 +627,38 @@ try {
   await theme(true); await shot('session-dark')
 
   await page.cdp('Emulation.setDeviceMetricsOverride', {width:700,height:1000,deviceScaleFactor:1,mobile:false})
-  await page.click('#right-hide'); await openGlobal(); await theme(false)
-  const globalNarrow = await measure('#global-panel .dt-page')
-  check('700px 全局页无页面级横向溢出', globalNarrow.viewport === 700 && globalNarrow.documentOverflow === false && globalNarrow.rootOverflow === false, globalNarrow)
-  await shot('global-700-light')
-  await page.click('#nav-conversation'); await openRight(); await theme(true)
-  const sessionNarrow = await measure('#right-panel .dt-page')
-  check('700px 会话右栏无页面级横向溢出', sessionNarrow.viewport === 700 && sessionNarrow.documentOverflow === false && sessionNarrow.rootOverflow === false, sessionNarrow)
-  await shot('session-700-dark')
+  await page.click('#right-hide'); await openGlobal()
+  await exerciseTabs('#global-panel')
+  await page.click('#nav-conversation'); await openRight()
+  await exerciseTabs('#right-panel')
+
+  for (const container of ['global','session']) {
+    if (container === 'global') {
+      await page.click('#right-hide'); await openGlobal()
+    } else {
+      await page.click('#nav-conversation'); await openRight()
+    }
+    const root = container === 'global' ? '#global-panel' : '#right-panel'
+    for (const dark of [false,true]) {
+      await theme(dark)
+      const layout = await measure(root + ' .dt-page')
+      const selected = await tabVisibility(root)
+      const visible = !selected.missing && selected.text?.trim() && selected.rect.width > 0 && selected.rect.height > 0
+        && selected.visibility === 'visible' && selected.opacity === '1'
+        && selected.color === selected.expectedColor && selected.textFill === selected.expectedColor
+      check('700px ' + container + ' ' + (dark ? 'dark' : 'light') + ' 当前页签可见且无横向溢出',
+        layout.viewport === 700 && layout.documentOverflow === false && layout.rootOverflow === false && Boolean(visible),
+        {layout,selected})
+      const name = container + '-700-' + (dark ? 'dark' : 'light')
+      if (container === 'session' && dark) observe('700px 深色右栏页签 DOM/computed style（动画完成后）', await inspectTabs(root))
+      await shot(name)
+    }
+  }
 
   const pageErrors = await page.evaluate(() => ({errors:window.__captureErrors,network:window.__networkViolations,navigation:window.__getNavigation(),calls:window.__navigationCalls}))
   check('无浏览器运行错误或外部网络请求', pageErrors.errors.length === 0 && pageErrors.network.length === 0, pageErrors)
-  check('双主题与 700px 截图齐全', ['global-light','global-dark','session-light','session-dark','global-700-light','session-700-dark'].every((name) => screenshots.some((item) => item.name === name)), screenshots)
+  check('双主题与 700px 两容器完整截图矩阵齐全', ['global-light','global-dark','session-light','session-dark',
+    'global-700-light','global-700-dark','session-700-light','session-700-dark'].every((name) => screenshots.some((item) => item.name === name)), screenshots)
 } catch (error) {
   console.error('VERIFY_ERROR', error)
   check('脚本执行完成', false, String(error && error.stack || error))
@@ -441,11 +670,11 @@ try {
   process.exitCode = 1
 } finally {
   if (results.some((row) => !row.pass)) process.exitCode = 1
-  const summary = {task:'task-22',passed:results.filter((row) => row.pass).length,failed:results.filter((row) => !row.pass).length,
+  const summary = {task:'task-28',passed:results.filter((row) => row.pass).length,failed:results.filter((row) => !row.pass).length,
     total:results.length,failedNames:results.filter((row) => !row.pass).map((row) => row.name),exitCode:process.exitCode || 0,
     chromium,repo:REPO,repoVersion:repoPackage.version,clientSha256,scriptSha256,frontendVersion:installed.frontendVersion,
     asar:ASAR,asarSha256:installed.asarSha256,installSource:INSTALL.source,artifacts:ARTIFACTS,screenshots,observations,
-    checks:results,unverified:['宿主 slot/导航服务和 HTTP API 为仿真 fixture；不是实际 DSH WebView 或真实仓库写操作。','本轮按 Lead 收窄指令只实跑导航、session scope、全局新建与截图；编辑/暂停/删除/Ticket/Outbox/草稿/键盘焦点复用既有 verify-panel-chromium 结果，未在本脚本重跑。']}
+    checks:results,unverified:['宿主 slot/导航服务和 HTTP API 为仿真 fixture；不是实际 DSH WebView 或真实仓库写操作。','真实宿主 DockKit chrome、读屏、触摸、IME 与用户整版确认不在本脚本证据范围内；编辑/暂停/删除/Ticket/Outbox/草稿复用既有 verify-panel-chromium 结果。']}
   writeFileSync(join(ARTIFACTS, 'summary.json'), JSON.stringify(summary, null, 2))
   writeFileSync(join(ARTIFACTS, 'api.json'), JSON.stringify(apiLog, null, 2))
   console.log('SUMMARY ' + JSON.stringify({passed:summary.passed,failed:summary.failed,total:summary.total,failedNames:summary.failedNames,exitCode:summary.exitCode,artifacts:ARTIFACTS,screenshots:screenshots.map((item) => item.path)}))
