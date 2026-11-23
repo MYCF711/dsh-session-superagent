@@ -13,9 +13,11 @@
 
 ### Changed
 
-- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1415/1415、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 18/18；两组双盲均签收，用户已确认整版 UI；PR CI 是实验仓合入门。
+- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1416/1416、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 18/18；两组双盲均签收，用户已确认整版 UI；PR CI 是实验仓合入门。
 
 ### Fixed
+
+- **Windows 凭证 ACL 不再残留普通用户组权限**：安装 Debug 发现 `/grant:r` 只替换当前用户 ACE，显式的 Authenticated Users、BUILTIN Users 与 Everyone grant/deny 会残留。改用当前用户 SID 授权，并按固定组 SID 同时删除 grant/deny，避免本地化名称差异；新增真实 `icacls` 预置反向用例，修复后仅保留当前用户完全控制。
 
 - **双盲 UI 复核**：会话头部按 Forge 接入 `sidebarRight.view` 订阅、`aria-pressed` 与同 Session 同 kind `hide/toggle`，缺 `sidebarRightTabs.register` 不再显示假可用入口；官方 forwardRef Button + Tooltip 的 hover/pin/Escape 与键盘路径通过。700px 选中页签的中间帧问题改为等待真实主题动画结束，稳态继续使用官方 token，未新增颜色或提高基线。
 
