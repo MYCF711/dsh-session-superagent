@@ -4,6 +4,17 @@
 >
 > 本文件只做静态只读核对与后续实施清单；本次没有改 `client.js`、没有启动 GUI、没有 commit。
 
+## 实施回写（1.1.0 · 共享全局页与会话右栏）
+
+- **官方**：DSH `0.2.2-rc.2`（`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`）的 `main[key]` + `sidebar.panellist[id]`、`conversation.session.header.utilities`、`sidebarRightTabs` definition + `sidebar.right.pane.tab(.title)` 与标准 `guide`；证据见 `docs/ui-decomp/04-会话级导航.md`。
+- **我们**：原面板收为一个 `SuperagentPage`。左侧注册 `session-superagent` 全局中枢；会话头部注册 `session-superagent-current`；右栏注册 `dsh-session-superagent/session`，打开 kind 为 `sessionSuperagent`。右栏 body/title 共用 definition id，Guide 只声明一张标准入口卡；旧 `conversation.view` 在 `layout.selectPanel` 可用时重定向全局页。
+- **共享功能**：watcher 新建/编辑/暂停/恢复/删除、Ticket、执行、Outbox、草稿、确认框、Session 导航和原键盘/焦点路径仍走同一组件与动作。全局读取显式使用 `/state?scope=global`；全局新建复用宿主 `sessions.list.getSnapshot()/refresh()` catalog 选择目标会话，目标 `sessionId` 只进入新建请求，不改变全局读取或批量动作；目录缺失/错误/为空均显式禁用并说明。右栏只消费 slot 的 `sessionId`，Ticket/Outbox/草稿及 watcher 动作显式携带该 scope；无 `sessionId` 不读取全局状态。
+- **服务降级**：`sidebarRight` 不存在时头部按钮禁用并显示真实原因，Dock/Orbit 保留旧操作列表并标明降级；`sidebarRightTabs` 不存在不伪造 definition。Dock/Orbit 有真实服务时只调用 `openTab('sessionSuperagent')`，不拼 `sidebar://`，也不猜 sessionId。
+- **素材与 derived**：入口继续复用既有 `OrbitMark` 主理鱼轨道图标、官方 Button 与 `dt-*`/token；头部 utility 是带 `aria-label/title` 的纯图标按钮，不占文字宽度；没有新画图标、浮层或独立开始页卡片。`SuperagentPage` 的 scope 适配与缺服务文案属于本插件 derived，原因是官方 Schedule/Forge 不持有主理鱼 watcher/Ticket 领域模型。
+- **hook/预览**：`SuperagentPage` 原有位置化 `useState` 队列没有新增或重排；全局目标选择复用现有 `form` 状态，新状态只在新头部入口、旧入口重定向组件自己的队列。`panel-harness` 增加真实可选服务注入，`render-preview` 同步 `deskHooks`、definition 与全局/会话页面， keyed slot 按 `name#id/key` 索引避免 body/title 互相覆盖。
+- **验证**：`modular-ui` 16/16、`client.test` 209/209；真实 Chromium 读取双主题静态预览，浅色/深色均包含全局与当前会话右栏、Ticket/Outbox/草稿，两个可见 frame 均无横向溢出。产物：`tmp-artifacts/task-18/preview.html`、`light.png`、`dark.png`。
+- **未验**：真实 DSH WebView 的 slot 注入、右栏显示/隐藏同步、读屏/触摸/IME 与用户整版交互确认；本任务静态预览和组件桩不冒充这些验收，也未在本任务内完成两组双盲 Debug。用户确认前不推送。
+
 ## 实施回写（1.1.0 · 模块化会话级选择性复刻）
 
 - **官方**：`dsh-superagent-prototype@8c32a9dc5d72c033816c6a8110b37f40cf94fba4` 的 `ticket.tsx / execution.tsx / draft.tsx / widgets.tsx / client.css`。

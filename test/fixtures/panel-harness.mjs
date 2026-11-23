@@ -107,12 +107,15 @@ export function loadClient(options = {}) {
   // 本 render 里登记的 effect（runEffects() 才执行），每次 render 清空
   const effects = []
   const registrations = []
+  const services = options.services || {}
   // 槽位注册的「活着」集合：真宿主对 list 槽位「同 id + 同 priority」重复注册会抛错
   // （ui-conversation 的 viewTabs 靠它保证页签不重复）。桩以前返回空 disposer、从不检查，
   // 于是「改名忘了先 dispose」这种错在桩里全绿、到真机才炸。这里按宿主语义照做。
   const live = new Set()
   const ctx = {
     effect: (fn) => fn(),
+    // 真实宿主的可选服务入口。缺省保持老宿主夹具；导航用例显式注入 layout/sidebarRight。
+    get: (name) => services[name],
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) {
@@ -188,6 +191,7 @@ export function loadClient(options = {}) {
     windowListenerCount: (type) => (windowListeners.get(type) || new Set()).size,
     render,
     setViewport,
+    context: ctx,
     // 审核 T38：setter 以前是空函数，「点击 → 状态变化」零覆盖。
     // 现在 setter 会把调用记进这里，用例可以断言「点了这个按钮，状态真的变了」。
     stateCalls: () => hooks.stateCalls,

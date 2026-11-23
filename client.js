@@ -437,6 +437,34 @@ window.__ModuleLoader__.load({
 
     // 客户端版本探针：每次模块加载写一次，用来确认浏览器里跑的是哪一版
     const CLIENT_VERSION = '1.1.0'
+
+    // 会话级导航使用官方 root/session slot。服务是可选的：老宿主没有它们时，
+    // 全局页仍可用，头部入口明确禁用，Dock 保留旧操作列表；不能用猜来的路由代替真实服务。
+    const GLOBAL_PANEL_ID = 'session-superagent'
+    const RIGHT_TAB_ID = 'dsh-session-superagent/session'
+    const RIGHT_TAB_KIND = 'sessionSuperagent'
+    const HEADER_UTILITY_ID = 'session-superagent-current'
+    let hostLayout = null
+    let hostSidebarRight = null
+    let hostSidebarRightTabs = null
+    let hostSessions = null
+
+    function optionalHostService(ctx, name) {
+      try {
+        const service = typeof ctx.get === 'function' ? ctx.get(name) : ctx[name]
+        return service || null
+      } catch {
+        return null
+      }
+    }
+
+    function openSessionSuperagentTab() {
+      if (!hostSidebarRight || typeof hostSidebarRight.openTab !== 'function') {
+        throw new Error('宿主 sidebarRight.openTab 服务不存在')
+      }
+      // 右栏 session slot 自带当前 sessionId；调用方只传 kind，不拼 sidebar:// 地址或伪造 params。
+      return hostSidebarRight.openTab(RIGHT_TAB_KIND)
+    }
     // SEMVER_COMPARATOR_SOURCE_START
     // This block is duplicated verbatim in client.js because the browser UMD cannot import ESM.
     // test/update-semver.test.mjs audits both copies and exercises their behavior.
@@ -1478,7 +1506,7 @@ window.__ModuleLoader__.load({
     }
 
     function WatcherForm({ mode = 'edit', idPrefix = 'watcher', value, snapshot, defaults = {}, disabled = false,
-      onChange, onSave, onDiscard, submitLabel = '保存', sessionId }) {
+      onChange, onSave, onDiscard, submitLabel = '保存', sessionId, targetControl = null }) {
       const [advancedOpen, setAdvancedOpen] = useState(false)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
@@ -1605,6 +1633,7 @@ window.__ModuleLoader__.load({
           if ((!next || !event.currentTarget.contains(next)) && !(busyRef.current && !next)) formFocusedRef.current = false
         },
       },
+        typeof targetControl === 'function' ? targetControl(busy) : targetControl,
         h(Fields, { disabled: busy || disabled },
           basic,
           h(DisclosureRow, {
@@ -2375,7 +2404,9 @@ window.__ModuleLoader__.load({
       if (!match) return { main: value, hint: '' }
       return { main: value.slice(0, match.index).trim(), hint: match[0].trim() }
     }
-    function StatusOrbit() {
+    function StatusOrbit(props = {}) {
+      // Dock 的 session slot 已提供当前 sessionId；右栏打开动作只传 kind。
+      const canOpenRight = Boolean(props.sessionId && hostSidebarRight && typeof hostSidebarRight.openTab === 'function')
       const [watchers, setWatchers] = useState(null)
       // 写操作的失败提示（M4）：为空表示没有错误
       const [orbitError, setOrbitError] = useState(null)
@@ -2503,6 +2534,15 @@ window.__ModuleLoader__.load({
         setOpen((value) => !value)
       }
 
+      const openRight = async () => {
+        try {
+          await openSessionSuperagentTab()
+          setOrbitError(null)
+        } catch (error) {
+          setOrbitError('打开本会话右栏失败：' + String((error && error.message) || error))
+        }
+      }
+
       const button = h('button', {
         ref: btnRef,
         type: 'button',
@@ -2512,9 +2552,9 @@ window.__ModuleLoader__.load({
             ? list.map((w) => (w.repo + ' · ' + (w.title || '未命名会话') + ' · ' + sessionTag(w.sessionId) + ' · ' + STATE_TEXT[orbitStateOf(w)])).join('\n')
             : '还没有' + brandName + ' —— 在「' + brandName + '」页加一条',
         'aria-label': summary,
-        'aria-expanded': open ? 'true' : 'false',
+        'aria-expanded': canOpenRight ? undefined : open ? 'true' : 'false',
         className: cx('dt-btn', 'dt-btn-ghost', 'sa-orbit-trigger', watchers === null && 'is-loading'),
-        onClick: toggle,
+        onClick: canOpenRight ? openRight : toggle,
       }, h(OrbitMark, { watchers: list }))
 
       // DSH 固定业务宽度 252/368，坐标全部交给 useAnchoredPosition；只有 fallback 保留视口夹紧与手算 bottom。
@@ -2718,6 +2758,10 @@ window.__ModuleLoader__.load({
         // 读失败与写操作失败分开说；旧列表仍可保留在错误上方。
         readError ? h('div', { className: 'sa-dock-err', role: 'alert' }, readError) : null,
         !readError && orbitError ? h('div', { className: 'sa-dock-err', role: 'alert' }, '操作失败：' + orbitError) : null,
+        !canOpenRight ? h('div', { className: 'sa-dock-foot', role: 'status' },
+          !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
+            ? '宿主 sidebarRight 服务不存在；已保留旧操作列表。'
+            : '当前 Dock 没有 sessionId；已保留旧操作列表，未读取右栏。') : null,
         list.length > 0
           ? h('div', { className: 'sa-dock-foot' }, '详细状态与凭证在「' + brandName + '」标签页')
           : null)
@@ -2764,11 +2808,12 @@ window.__ModuleLoader__.load({
     // ── 官方 GUI 的三个交互件（移植自 src/client/provider.tsx + draft.tsx + src/client/controls.tsx）──
 
     /** 轮询：可见时按 interval，隐藏时降频 6 倍；上一轮没跑完就跳过；卸载时清干净。 */
-    function usePoll(task, intervalMs = POLL_MS) {
+    function usePoll(task, intervalMs = POLL_MS, enabled = true) {
       const ref = useRef(task)
       ref.current = task
       const busy = useRef(false)
       useEffect(() => {
+        if (!enabled) return undefined
         let alive = true
         let timer = null
         let discovered = false
@@ -2789,7 +2834,7 @@ window.__ModuleLoader__.load({
         }
         step()
         return () => { alive = false; if (timer) clearTimeout(timer) }
-      }, [intervalMs])
+      }, [intervalMs, enabled])
     }
 
     /** 轻量 Toast：DSH 可用时由宿主计时；fallback 保留 4 秒自动消失。 */
@@ -3624,8 +3669,13 @@ window.__ModuleLoader__.load({
           : null)
     }
 
-    function ZhuliPanel(props) {
-      const sessionId = props && props.sessionId
+    function SuperagentPage(props = {}) {
+      // 同一个领域页面服务两个宿主容器；scope 只决定数据范围，不复制 watcher/Ticket/草稿动作。
+      const scope = props.scope === 'global' ? 'global' : 'session'
+      const sessionId = scope === 'session' ? props.sessionId : null
+      const legacyGlobal = props.legacyGlobal === true
+      const legacyEntry = props.legacyEntry === true
+      const missingSession = scope === 'session' && !sessionId
       /** 暂停原因码 → 人话（服务端 deferReason 是唯一来源）。 */
       const DEFER_LABELS = {
         'active-hours': '不在活跃时段',
@@ -3641,6 +3691,36 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('overview')
       const [notice, setNotice] = useState(null)
       const [form, setForm] = useState({ ...CREATE_WATCHER_VALUES })
+      // 全局新建复用现有 form 状态，不新增位置化 hook；目标 sessionId 只进入新建请求。
+      const createSessionId = scope === 'global' ? String(form.createSessionId || '') : sessionId
+      let sessionCatalog = null
+      let sessionCatalogMessage = null
+      let sessionCatalogIds = []
+      if (scope === 'global' && !legacyGlobal) {
+        try {
+          if (!hostSessions || !hostSessions.list || typeof hostSessions.list.getSnapshot !== 'function') {
+            sessionCatalogMessage = '宿主 sessions catalog 不可用，无法选择目标会话。'
+          } else {
+            sessionCatalog = hostSessions.list.getSnapshot()
+            const byId = sessionCatalog && sessionCatalog.byId && typeof sessionCatalog.byId === 'object' ? sessionCatalog.byId : {}
+            sessionCatalogIds = Object.keys(byId).sort()
+            if (sessionCatalog.phase === 'error') {
+              sessionCatalogMessage = '会话目录读取失败：' + String(sessionCatalog.error || '未知错误')
+            } else if (sessionCatalog.phase !== 'ready') {
+              sessionCatalogMessage = '正在读取会话目录…'
+            } else if (sessionCatalogIds.length === 0) {
+              sessionCatalogMessage = '会话目录为空，无法新建 watcher。'
+            }
+          }
+        } catch (error) {
+          sessionCatalog = null
+          sessionCatalogMessage = '会话目录读取失败：' + String((error && error.message) || error)
+        }
+      }
+      const createSessionReady = scope === 'session'
+        ? Boolean(sessionId)
+        : Boolean(!legacyGlobal && sessionCatalog && sessionCatalog.phase === 'ready'
+          && createSessionId && sessionCatalog.byId && sessionCatalog.byId[createSessionId])
       const [token, setToken] = useState('')
       const [goalDraft, setGoalDraft] = useState('')
       const [goalTouched, setGoalTouched] = useState(false)
@@ -3763,9 +3843,15 @@ window.__ModuleLoader__.load({
       // 记下最新一次的 promise：被顶掉就等它，用最新快照回话；它真失败时仍然按失败返回。
       const latestLoadRef = useRef(null)
       const load = useCallback(() => {
+        if (missingSession) return Promise.resolve(null)
         const seq = ++loadSeqRef.current
         const job = (async () => {
-          const statePath = sessionId ? '/state?sessionId=' + encodeURIComponent(String(sessionId)) : '/state'
+          // 新全局页显式声明 scope=global；旧中栏在无 layout 的宿主里保留原 /state 兼容读取。
+          const statePath = legacyGlobal
+            ? '/state'
+            : scope === 'global'
+              ? '/state?scope=global'
+              : '/state?sessionId=' + encodeURIComponent(String(sessionId))
           const etag = readStateEtag(statePath)
           try {
             const payload = await call(statePath, etag ? { headers: { 'if-none-match': etag } } : undefined)
@@ -3801,10 +3887,24 @@ window.__ModuleLoader__.load({
         })()
         latestLoadRef.current = job
         return job
-      }, [sessionId])
+      }, [sessionId, scope, legacyGlobal, missingSession])
 
       useEffect(() => { ensurePortedCss() }, [])
-      usePoll(load, POLL_MS)
+      usePoll(load, POLL_MS, !missingSession)
+      useEffect(() => {
+        if (scope !== 'global' || legacyGlobal || !hostSessions || !hostSessions.list
+          || typeof hostSessions.list.getSnapshot !== 'function' || typeof hostSessions.refresh !== 'function') return undefined
+        let current
+        try { current = hostSessions.list.getSnapshot() } catch { return undefined }
+        if (current.phase === 'ready') return undefined
+        let alive = true
+        Promise.resolve().then(() => hostSessions.refresh())
+          .then(() => { if (alive) load() })
+          .catch((error) => {
+            if (alive) setNotice({ ok: false, text: '会话目录读取失败：' + String((error && error.message) || error) })
+          })
+        return () => { alive = false }
+      }, [scope, legacyGlobal, load])
 
       const body = snap.body || {}
       // 默认值提示从后端读：写死 12/3/6 会在常量变化后变成谎话（JSON Schema 的 default 也是这个用法）
@@ -3815,14 +3915,20 @@ window.__ModuleLoader__.load({
       const watchers = body.watchers || []
       const modular = body.modular && typeof body.modular === 'object' ? body.modular : null
       const hasExternalModularActions = Boolean(props.modularActions || typeof props.onModularAction === 'function')
+      // 新会话右栏的写操作显式携带 scope；旧中栏兼容入口不改变既有请求契约。
+      const scopedWriteSessionId = scope === 'session' && !legacyEntry ? sessionId : null
+      const withWriteScope = (payload) => scopedWriteSessionId ? { ...payload, sessionId: scopedWriteSessionId } : payload
       const modularActions = {
         ...(modular && modular.actions === true && !hasExternalModularActions ? {
-          resume: (ticketId) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify({ action: 'resume', ticketId }) }), '已提交恢复'),
-          stop: (ticketId) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify({ action: 'stop', ticketId }) }), '已停止 Ticket'),
-          flush: () => run(() => call('/outbox', { method: 'POST', body: '{}' }), 'Outbox 已刷新'),
-          pauseProcessing: (paused) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify({ action: paused ? 'pause-processing' : 'resume-processing' }) }), paused ? '已暂停 worker' : '已恢复 worker'),
-          save: (body, context) => run(() => call('/draft', { method: 'POST', body: JSON.stringify({ ...context, body }) }), '草稿已保存'),
-          clear: (context) => run(() => call('/draft', { method: 'POST', body: JSON.stringify({ ...context, clear: true }) }), '草稿已清空'),
+          resume: (ticketId) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify(withWriteScope({ action: 'resume', ticketId })) }), '已提交恢复'),
+          stop: (ticketId) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify(withWriteScope({ action: 'stop', ticketId })) }), '已停止 Ticket'),
+          flush: () => run(() => call('/outbox', { method: 'POST', body: JSON.stringify(withWriteScope({})) }), 'Outbox 已刷新'),
+          ...(scope === 'global' ? {
+            // executorPaused 是全局开关；会话右栏不展示这个必然跨 scope 的动作。
+            pauseProcessing: (paused) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify({ action: paused ? 'pause-processing' : 'resume-processing' }) }), paused ? '已暂停 worker' : '已恢复 worker'),
+          } : {}),
+          save: (body, context) => run(() => call('/draft', { method: 'POST', body: JSON.stringify(withWriteScope({ ...context, body })) }), '草稿已保存'),
+          clear: (context) => run(() => call('/draft', { method: 'POST', body: JSON.stringify(withWriteScope({ ...context, clear: true })) }), '草稿已清空'),
         } : {}),
         ...(props.modularActions || {}),
       }
@@ -4026,7 +4132,7 @@ window.__ModuleLoader__.load({
       }, '已保存：' + watcher.repo, { rethrow: true })
 
       const act = (watcher, action) => run(async () => {
-        await call('/watch', { method: 'POST', body: JSON.stringify({ action, id: watcherId(watcher) }) })
+        await call('/watch', { method: 'POST', body: JSON.stringify(withWriteScope({ action, id: watcherId(watcher) })) })
       }, action === 'delete' ? '已删除 ' + watcher.repo
         : action === 'poll' ? '已触发一次轮询：' + watcher.repo
         // 审核 T24 W6：暂停/恢复成功以前什么都不说，客户不确定点没点上。
@@ -4040,17 +4146,18 @@ window.__ModuleLoader__.load({
         for (const watcher of list) {
           if (action === 'pause' && !watcher.enabled) continue
           if (action === 'resume' && watcher.enabled) continue
-          await call('/watch', { method: 'POST', body: JSON.stringify({ action, id: watcherId(watcher) }) })
+          await call('/watch', { method: 'POST', body: JSON.stringify(withWriteScope({ action, id: watcherId(watcher) })) })
         }
       }, action === 'pause' ? '全部已暂停' : '全部已恢复')
 
       const addWatcher = () => run(async () => {
+        if (!createSessionReady) throw new Error('目标会话不可用：' + (sessionCatalogMessage || '请选择目标会话'))
         const value = { ...CREATE_WATCHER_VALUES, ...form }
         const created = await call('/watch', {
           method: 'POST',
           body: JSON.stringify((() => {
             const valueDirty = (key) => createTouchedRef.current.has(key) || !watcherSameValue(value[key], createSnapshotRef.current[key])
-            const payload = { repo: value.repo.trim(), sessionId }
+            const payload = { repo: value.repo.trim(), sessionId: createSessionId }
             // 监控类型永远提交：它决定服务端 id 前缀（`pr:`），漏了就当 issue 建。
             payload.watchKind = value.watchKind === 'pr' ? 'pr' : 'issue'
             if (payload.watchKind === 'pr') {
@@ -4795,8 +4902,27 @@ window.__ModuleLoader__.load({
       const trigger = h(Section, { title: '新增' + BRAND },
         h(WatcherForm, {
           mode: 'create', idPrefix: 'watcher-new', value: { ...CREATE_WATCHER_VALUES, ...form },
-          snapshot: createSnapshotRef.current, defaults: DEFAULTS, disabled: !sessionId, sessionId,
-          submitLabel: sessionId ? '添加到当前会话' : '先打开一个会话',
+          snapshot: createSnapshotRef.current, defaults: DEFAULTS, disabled: !createSessionReady, sessionId: createSessionId,
+          submitLabel: scope === 'global'
+            ? (createSessionReady ? '添加到所选会话' : '选择目标会话')
+            : (sessionId ? '添加到当前会话' : '先打开一个会话'),
+          targetControl: scope === 'global' && !legacyGlobal ? (busy) => h(Field, { id: 'watcher-new-session', label: '目标会话' },
+            h(React.Fragment, null,
+              h('select', {
+                id: 'watcher-new-session', className: 'dt-select', 'aria-label': '目标会话',
+                value: createSessionId,
+                disabled: busy || !sessionCatalog || sessionCatalog.phase !== 'ready' || sessionCatalogIds.length === 0,
+                onChange: (event) => setCreateField('createSessionId', event.target.value),
+              },
+                h('option', { value: '' }, '选择目标会话'),
+                sessionCatalogIds.map((id) => {
+                  const item = sessionCatalog.byId[id]
+                  const title = item && (item.title || item.name)
+                  return h('option', { key: id, value: id }, title ? String(title) + ' · ' + id : id)
+                })),
+              sessionCatalogMessage
+                ? h('p', { className: sessionCatalog && sessionCatalog.phase === 'error' ? 'dt-error' : 'dt-hint', role: sessionCatalog && sessionCatalog.phase === 'error' ? 'alert' : undefined }, sessionCatalogMessage)
+                : h('p', { className: 'dt-hint' }, '只用于新建 watcher；不改变全局读取或批量动作范围。'))) : null,
           onChange: setCreateField,
           onSave: addWatcher,
           onDiscard: () => {
@@ -5173,13 +5299,23 @@ window.__ModuleLoader__.load({
         return h(Field, { key: label, label, hint, note }, control)
       }
 
+      if (missingSession) {
+        return h('div', { className: 'dt-page' }, h('div', { className: 'dt-column' },
+          h('div', { className: 'dt-card dt-error-card' },
+            h('div', { className: 'dt-card-head' }, h('span', { className: 'dt-card-title' }, '无法打开会话工作台')),
+            h('p', { className: 'dt-error', role: 'alert' }, '右栏 slot 没有提供当前 sessionId；未读取全局数据，也未发出任何会话写操作。'),
+            h(Hint, null, '请从已打开会话的头部入口或 Dock 进入；宿主必须提供真实 sessionId。'))))
+      }
+
       return h('div', { className: 'dt-page' },
         h('div', { className: 'dt-page-head' },
           h('div', null,
             h('h1', { className: 'dt-page-title' }, BRAND),
             h('span', { className: 'dt-hint' },
-              (body.sessionTitle ? '会话：' + body.sessionTitle + ' · ' : '')
-              + (sessionId ? '盯办 + 主动办：仓库有动静就叫醒本会话' : '（在会话里打开本面板，才能把仓库绑到会话上）'))),
+              scope === 'global' && !legacyGlobal
+                ? '全局中枢 · 全部项目会话的 watcher、Ticket、执行、Outbox 与健康'
+                : (body.sessionTitle ? '会话：' + body.sessionTitle + ' · ' : '')
+                  + (sessionId ? '盯办 + 主动办：仓库有动静就叫醒本会话' : '（在会话里打开本面板，才能把仓库绑到会话上）'))),
           h('div', { className: 'dt-toolbar' },
             h(Input, { value: search, placeholder: '搜索仓库 / 编号 / 标题', onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索' }),
             h(Btn, { size: 'sm', variant: 'ghost', icon: h(Icon, { name: 'question' }), onClick: () => setGlossary(true) }, '术语'),
@@ -5300,10 +5436,88 @@ window.__ModuleLoader__.load({
     }
 
 
+    // 旧中栏只负责迁移；没有 layout 的老宿主才保留原页面作为兼容回退。
+    function LegacySuperagentPage(props = {}) {
+      // 同一渲染层直接调用，保留旧宿主/测试在注册后即执行 Component 的契约。
+      return SuperagentPage({
+        ...props,
+        scope: props.sessionId ? 'session' : 'global',
+        legacyGlobal: !props.sessionId,
+        legacyEntry: true,
+      })
+    }
+
+    function LegacySuperagentRedirect() {
+      const [error, setError] = useState(null)
+      const redirect = () => {
+        try {
+          if (!hostLayout || typeof hostLayout.selectPanel !== 'function') throw new Error('宿主 layout.selectPanel 服务不存在')
+          hostLayout.selectPanel(GLOBAL_PANEL_ID)
+          setError(null)
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure))
+        }
+      }
+      useEffect(() => { redirect() }, [])
+      return h('div', { className: 'dt-page' }, h('div', { className: 'dt-column' },
+        h('h1', { className: 'dt-page-title' }, tabNameLabel()),
+        h(Hint, null, '旧中栏入口已迁移到左侧全局中枢。'),
+        error ? h('p', { className: 'dt-error', role: 'alert' }, '打开全局中枢失败：' + error) : null,
+        h('div', null, h(Btn, { size: 'sm', variant: 'outline', onClick: redirect }, '打开左侧全局中枢'))))
+    }
+
+    function SuperagentGlobalPage(props = {}) {
+      return h(SuperagentPage, { ...props, scope: 'global' })
+    }
+
+    function SuperagentSessionPage(props = {}) {
+      // sessionId 只从右栏 session slot 读取，不从 URL、watcher 或全局状态猜测。
+      return h(SuperagentPage, { ...props, scope: 'session' })
+    }
+
+    function SuperagentNavIcon() {
+      // 主理鱼既有 derived 轨道图标；不借用 Schedule 时钟或 Forge 分支图标。
+      return h(OrbitMark, { watchers: [] })
+    }
+
+    function SuperagentHeaderUtility(props = {}) {
+      const [error, setError] = useState(null)
+      const unavailable = !props.sessionId
+        ? '当前头部 slot 没有 sessionId'
+        : !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
+          ? '宿主 sidebarRight.openTab 服务不存在'
+          : null
+      const open = async () => {
+        if (unavailable) return
+        try {
+          await openSessionSuperagentTab()
+          setError(null)
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure))
+        }
+      }
+      const label = '本会话的主理鱼'
+      return h(React.Fragment, null,
+        h(Btn, {
+          variant: 'toolbar', size: 'sm', icon: h(SuperagentNavIcon),
+          'aria-label': label, title: unavailable || label,
+          disabled: Boolean(unavailable), onClick: open,
+        }),
+        error ? h('span', { className: 'dt-error', role: 'alert' }, '打开右栏失败：' + error) : null)
+    }
+
+    function SuperagentRightTabTitle() {
+      return h(React.Fragment, null, h(SuperagentNavIcon), h('span', null, tabNameLabel()))
+    }
+
     let hostOpenSession = null
     return {
       inject: ['slots'],
       apply(ctx) {
+        hostLayout = optionalHostService(ctx, 'layout')
+        hostSidebarRight = optionalHostService(ctx, 'sidebarRight')
+        hostSidebarRightTabs = optionalHostService(ctx, 'sidebarRightTabs')
+        hostSessions = optionalHostService(ctx, 'sessions')
         try { noteOnce('client-version', CLIENT_VERSION) } catch {}
         try { note('apply', 'start') } catch {}
         // 样式表在这里注入一次就够了：任何槽位（面板 / 圆环 / 将来的入口）都用得上。
@@ -5315,6 +5529,9 @@ window.__ModuleLoader__.load({
         //    宿主只在 register/dispose 时重算文案，所以改名走「先释放、再同 id/order/component
         //    重注册」—— 先 dispose 保证列表里不会出现第二条同 id 的注册。
         tabNameOverride = readTabNameOverride()
+        const legacyComponent = hostLayout && typeof hostLayout.selectPanel === 'function'
+          ? LegacySuperagentRedirect
+          : LegacySuperagentPage
         const openSession = async (id) => {
           const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : ctx.sessions
           const uiWorkspace = typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : ctx.uiWorkspace
@@ -5326,6 +5543,94 @@ window.__ModuleLoader__.load({
           uiWorkspace.openSession(id)
         }
         hostOpenSession = openSession
+
+        // 左侧全局中枢：main 与 sidebar.panellist 使用同一个 panel id。
+        ctx.effect(() => {
+          if (!hostLayout || typeof hostLayout.selectPanel !== 'function') {
+            noteOnce('layout-unavailable', 'layout.selectPanel 服务不存在；保留旧中栏，不注册无法选择的全局入口')
+            return undefined
+          }
+          try {
+            return ctx.slots.inject('main', () => ctx.slots.register({
+              name: 'main', key: GLOBAL_PANEL_ID,
+            }, SuperagentGlobalPage))
+          } catch (error) {
+            note('global-panel-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+        ctx.effect(() => {
+          if (!hostLayout || typeof hostLayout.selectPanel !== 'function') return undefined
+          try {
+            return ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+              name: 'sidebar.panellist', id: GLOBAL_PANEL_ID, order: 20,
+              label: () => tabNameLabel(),
+            }, SuperagentNavIcon))
+          } catch (error) {
+            note('global-sidebar-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+
+        // 右栏 page type：definition.id 用于 keyed body/title 分派，definition.kind 用于 openTab。
+        ctx.effect(() => {
+          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') {
+            noteOnce('sidebar-right-tabs-unavailable', 'sidebarRightTabs.register 服务不存在；会话头部入口显示不可用原因')
+            return undefined
+          }
+          try {
+            return hostSidebarRightTabs.register({
+              id: RIGHT_TAB_ID,
+              kind: RIGHT_TAB_KIND,
+              priority: 'builtin',
+              title: () => tabNameLabel(),
+              guide: [{
+                id: 'session-superagent',
+                order: 20,
+                title: () => tabNameLabel(),
+                description: () => '查看当前项目会话的 watcher、Ticket、执行、Outbox 与草稿',
+                icon: SuperagentNavIcon,
+              }],
+            })
+          } catch (error) {
+            note('right-definition-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+        ctx.effect(() => {
+          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
+          try {
+            return ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+              name: 'sidebar.right.pane.tab', key: RIGHT_TAB_ID,
+            }, SuperagentSessionPage))
+          } catch (error) {
+            note('right-tab-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+        ctx.effect(() => {
+          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
+          try {
+            return ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+              name: 'sidebar.right.pane.tab.title', key: RIGHT_TAB_ID,
+            }, SuperagentRightTabTitle))
+          } catch (error) {
+            note('right-title-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+        ctx.effect(() => {
+          if (!hostLayout && !hostSidebarRight && !hostSidebarRightTabs) return undefined
+          try {
+            return ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+              name: 'conversation.session.header.utilities', id: HEADER_UTILITY_ID, order: -6,
+            }, SuperagentHeaderUtility))
+          } catch (error) {
+            note('header-utility-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+
         ctx.effect(() => {
           try {
             return ctx.slots.inject('conversation.view', () => {
@@ -5336,7 +5641,7 @@ window.__ModuleLoader__.load({
                   id: 'session-superagent-desk',
                   order: 30,
                   label: tabNameLabel(),
-                }, ZhuliPanel)
+                }, legacyComponent)
               }
               const unmountDesk = () => {
                 if (!disposeDesk) return
