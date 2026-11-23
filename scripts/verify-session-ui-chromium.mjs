@@ -372,6 +372,7 @@ try {
   check('左侧全局页、头部图标与右栏 definition 注册完整', ['main#session-superagent','sidebar.panellist#session-superagent','sidebar.right.pane.tab#dsh-session-superagent/session','sidebar.right.pane.tab.title#dsh-session-superagent/session','conversation.session.header.utilities#session-superagent-current'].every((key) => registration.keys.includes(key))
     && registration.definitions.some((item) => item.id === 'dsh-session-superagent/session' && item.kind === RIGHT_KIND && item.guide === 1)
     && registration.headerText === '' && registration.headerSvg, registration)
+  check('旧 session-superagent-desk/conversation.view 中栏缺席', !registration.keys.includes('conversation.view#session-superagent-desk'), registration.keys)
 
   await openRight()
   const right = await page.evaluate(() => ({sessionId:document.querySelector('#right-panel')?.getAttribute('data-session-id'),
