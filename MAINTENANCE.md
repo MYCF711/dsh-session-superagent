@@ -33,7 +33,8 @@
 | Outbox | 同进程单飞、跨进程租约、热重载共享 flush、不同 Ticket 排队、attempts 栅栏均有回归 |
 | 生产接线 | worker/inline、bot/系统事件、ack 操作 ID、watcher 世代、marker 分页、执行模式切换已定向复验 |
 | 草稿 | revision 乐观锁 + 旧值 409；前端保留另一标签页未保存文本 |
-| 隔离 preflight / 实例 | **exit 0：41 PASS + 3 个预期 SKIP**；`session-ui-release-preflight-v2.log`。profile 缺失/断链/陈旧均 0；2.0.0 headless 实例 `watch_start`、重挂 interval、12 工具通过 |
+| 隔离 preflight / 实例 | **exit 0：41 PASS + 3 个预期 SKIP**；`session-ui-review-preflight.log`。profile 缺失/断链/陈旧均 0；2.0.0 headless 实例 `watch_start`、重挂 interval、12 工具通过 |
+| CI 预验 | Node **22.23.5** 按 CI 命令跑 fast preflight：**1415/1415、39 项检查 exit 0**，UI/docs 通过；`session-ui-node22-preflight.log`。Node **24.20.0** 已跑完整 preflight。GitHub PR CI 尚未运行 |
 | 双盲 Debug | task-20 核心重试：25 个真实 HTTP、10 类跨会话写 403、状态哈希不变、公开回归 19/19，**0 findings**；`session-ui-blind-core-retry/REPORT.md`。task-21 UI 原四项复核全部 CLOSED，独立 18/18；`session-ui-blind-ui/REPORT-RECHECK.md` |
 | UI | 新导航真实 Chromium **18/18，exit 0**；旧中栏缺席、会话隔离、全局新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过；`session-ui-review-final-v3/`。**本轮 UI 尚未获用户整版确认，未推送** |
 | headless | 无 `webServer` 实例 `watch_start`、重新 import/apply、interval 恢复通过；单守异常不连累好守，`lastError` 落盘有回归 |
