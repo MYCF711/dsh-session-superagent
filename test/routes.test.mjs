@@ -665,6 +665,187 @@ test('/state?sessionId 返回当前会话 goal/title/usage；无 sessionId 不�
   assert.equal(anonymous.sessionUsage.used, 0)
 })
 
+async function createSessionScopeFixture(label) {
+  const localRoutes = new Map()
+  const dir = tempDir('zhuli-session-scope-' + label + '-')
+  process.env.DSH_SUPERAGENT_STATE = dir
+  process.env.DSH_SUPERAGENT_NO_POLL = '1'
+  process.env.DSH_SUPERAGENT_OFFLINE = '1'
+  const sessionA = 'session-scope-a'
+  const sessionB = 'session-scope-b'
+  const ctx = {
+    tools: { register: () => {} },
+    webServer: { register: (route) => { localRoutes.set(route.path, route); return () => {} } },
+    agents: {
+      currentInitiator: () => ({ id: sessionA }),
+      get: (id) => ({ id, status: 'idle', followup: () => {} }),
+    },
+    get: () => null, on() {}, effect: (fn) => fn(), inject: () => {},
+  }
+  const mod = await import('../lib/index.js?session-scope=' + label + '-' + Math.random())
+  const acks = []
+  const provider = {
+    name: 'fake', capabilities: () => ['issues', 'ack'],
+    list: async () => ({ ok: true, items: [] }), keyOf: (item) => String(item.number),
+    cursorOf: (item) => String(item.updated_at || ''), compareCursor: (left, right) => left === right,
+    acknowledge: async (spec) => { acks.push(spec.repo + '#' + spec.number); return { ok: true, cursor: 'fake:' + spec.number } },
+  }
+  mod.apply(ctx, { providers: [provider] })
+  const watcherA = 'acme/scope-a#' + sessionA
+  const watcherB = 'acme/scope-b#' + sessionB
+  mod.__test.writeState({ watchers: {
+    [watcherA]: {
+      id: watcherA, provider: 'fake', repo: 'acme/scope-a', sessionId: sessionA, intervalSec: 60, enabled: '0',
+      goal: 'A 的私有 watcher goal', events: [{ at: '2026-11-23T00:00:00Z', kind: 'poll', text: 'A-only-event' }],
+    },
+    [watcherB]: {
+      id: watcherB, provider: 'fake', repo: 'acme/scope-b', sessionId: sessionB, intervalSec: 120, enabled: true,
+      goal: 'B 的私有 watcher goal', events: [{ at: '2026-11-23T00:00:00Z', kind: 'poll', text: 'B-only-event' }],
+    },
+  } })
+  await mod.__test.recordRuntimeDelivery(
+    { provider: 'fake', repo: 'acme/scope-a', sessionId: sessionA, workdir: process.cwd() },
+    { number: 1, key: 'issue:a', title: 'A Ticket', updated_at: '2026-11-23T00:00:00Z' },
+  )
+  await mod.__test.recordRuntimeDelivery(
+    { provider: 'fake', repo: 'acme/scope-b', sessionId: sessionB, workdir: process.cwd() },
+    { number: 2, key: 'issue:b', title: 'B Ticket', updated_at: '2026-11-23T00:00:00Z' },
+  )
+  const ticketA = 'ticket:fake:acme/scope-a#1'
+  const ticketB = 'ticket:fake:acme/scope-b#2'
+  const at = '2026-11-23T00:00:00Z'
+  mod.__test.commitModularState(mod.__test.readState().modularVersion || 0, (disk) => ({
+    ...disk,
+    outbox: [
+      { id: 'outbox-a', ticketId: ticketA, channel: { type: 'ack', watcherId: watcherA, repo: 'acme/scope-a', number: '1', kind: 'issue' }, body: 'A-only-outbox', status: 'pending', attempts: 0, nextAt: at, createdAt: at, updatedAt: at },
+      { id: 'outbox-b', ticketId: ticketB, channel: { type: 'ack', watcherId: watcherB, repo: 'acme/scope-b', number: '2', kind: 'issue' }, body: 'B-only-outbox', status: 'pending', attempts: 0, nextAt: at, createdAt: at, updatedAt: at },
+    ],
+  }))
+  const callLocal = async (method, path, body) => {
+    const route = localRoutes.get(path.split('?')[0])
+    assert.ok(route, '路由不存在：' + path)
+    const res = makeRes()
+    await route.handler(makeReq(method, path, body === undefined ? undefined : JSON.stringify(body)), res)
+    return res
+  }
+  return { mod, call: callLocal, acks, sessionA, sessionB, watcherA, watcherB, ticketA, ticketB }
+}
+
+test('两会话读隔离：watcher/Ticket/Outbox/事件/草稿由服务端过滤，显式全局入口保留', async () => {
+  const f = await createSessionScopeFixture('read')
+  const saved = await f.call('POST', '/session-superagent/draft', {
+    ticketId: f.ticketA, sessionId: f.sessionA, body: 'A-only-draft', revision: 0,
+  })
+  assert.equal(saved.statusCode, 200, saved.body)
+
+  const focused = (await f.call('GET', '/session-superagent/state?sessionId=' + f.sessionA)).json()
+  assert.deepEqual(focused.watchers.map((w) => w.id), [f.watcherA])
+  assert.deepEqual(focused.watchers[0].events.map((event) => event.text), ['A-only-event'])
+  assert.equal(focused.watchers[0].enabled, false, 'enabled 仍统一走 isEnabled 投影')
+  assert.equal(focused.watchers[0].intervalSec, 60, 'poll 配置投影不被 scope 改写')
+  assert.deepEqual(focused.watchers[0].otherSessions, [])
+  assert.deepEqual(focused.modular.records.records.map((ticket) => ticket.id), [f.ticketA])
+  assert.deepEqual(focused.modular.records.outbox.records.map((message) => message.id), ['outbox-a'])
+  assert.equal(focused.modular.draft.value.body, 'A-only-draft')
+  assert.equal(JSON.stringify(focused).includes('B-only'), false)
+  assert.equal(JSON.stringify(focused).includes('B 的私有'), false)
+
+  const other = (await f.call('GET', '/session-superagent/state?sessionId=' + f.sessionB)).json()
+  assert.deepEqual(other.watchers.map((w) => w.id), [f.watcherB])
+  assert.deepEqual(other.modular.records.records.map((ticket) => ticket.id), [f.ticketB])
+  assert.equal(other.modular.draft, null)
+
+  const global = (await f.call('GET', '/session-superagent/state?scope=global')).json()
+  assert.deepEqual(global.watchers.map((w) => w.id).sort(), [f.watcherA, f.watcherB].sort())
+  assert.equal(global.modular.records.total, 2)
+  assert.equal(global.modular.records.outbox.total, 2)
+  assert.equal(global.modular.draft.value.body, 'A-only-draft')
+
+  const anonymous = (await f.call('GET', '/session-superagent/state')).json()
+  assert.equal(anonymous.watchers.length, 2, '旧全局入口保留全量 watcher')
+  assert.equal(anonymous.modular.records.total, 2, '旧全局入口保留 Ticket 投影')
+  assert.equal(anonymous.modular.draft, null, '无 sessionId 不回显任何会话草稿')
+  assert.ok(anonymous.watchers.every((watcher) => watcher.goal === null && watcher.note === ''))
+
+  const tickets = (await f.call('GET', '/session-superagent/tickets?sessionId=' + f.sessionA)).json()
+  assert.deepEqual(tickets.records.records.map((ticket) => ticket.id), [f.ticketA])
+  const outbox = (await f.call('GET', '/session-superagent/outbox?sessionId=' + f.sessionB)).json()
+  assert.deepEqual(outbox.outbox.records.map((message) => message.id), ['outbox-b'])
+  assert.equal((await f.call('GET', '/session-superagent/draft?sessionId=' + f.sessionB)).json().draft, null)
+  assert.equal((await f.call('GET', '/session-superagent/draft')).json().draft, null)
+  assert.equal((await f.call('GET', '/session-superagent/draft?scope=global')).json().draft.value.body, 'A-only-draft')
+})
+
+test('跨会话写保护：watch/Ticket/草稿/Outbox 均 403 且状态不变', async () => {
+  const f = await createSessionScopeFixture('write')
+  const saved = await f.call('POST', '/session-superagent/draft', {
+    ticketId: f.ticketA, sessionId: f.sessionA, body: 'A-draft-before-attack', revision: 0,
+  })
+  assert.equal(saved.statusCode, 200, saved.body)
+  const baseline = JSON.stringify(f.mod.__test.readState())
+  const assertRefused = async (res, label) => {
+    assert.equal(res.statusCode, 403, label + '：' + res.body)
+    assert.equal(res.json().code, 'cross_session_write', label)
+    assert.equal(JSON.stringify(f.mod.__test.readState()), baseline, label + ' 不得改变状态')
+  }
+
+  for (const action of ['pause', 'resume', 'delete', 'poll', 'edit']) {
+    await assertRefused(await f.call('POST', '/session-superagent/watch', {
+      action, id: f.watcherA, sessionId: f.sessionB,
+    }), 'watch ' + action)
+  }
+  for (const action of ['stop', 'resume']) {
+    await assertRefused(await f.call('POST', '/session-superagent/tickets?sessionId=' + f.sessionA, {
+      action, ticketId: f.ticketB,
+    }), 'Ticket ' + action)
+  }
+  const pauseProcessing = await f.call('POST', '/session-superagent/tickets', {
+    action: 'pause-processing', sessionId: f.sessionA,
+  })
+  assert.equal(pauseProcessing.statusCode, 403)
+  assert.equal(pauseProcessing.json().code, 'global_scope_required')
+  assert.equal(JSON.stringify(f.mod.__test.readState()), baseline)
+  await assertRefused(await f.call('POST', '/session-superagent/draft', {
+    ticketId: f.ticketB, sessionId: f.sessionA, body: 'steal-B', revision: 0,
+  }), '跨会话编辑草稿')
+  await assertRefused(await f.call('POST', '/session-superagent/draft', {
+    ticketId: f.ticketA, sessionId: f.sessionB, clear: true, revision: 1,
+  }), '跨会话清空草稿')
+  await assertRefused(await f.call('POST', '/session-superagent/outbox', {
+    ticketId: f.ticketB, sessionId: f.sessionA,
+  }), '跨会话 flush')
+
+  const beforeB = JSON.stringify(f.mod.__test.readState().outbox.find((message) => message.id === 'outbox-b'))
+  const flushed = await f.call('POST', '/session-superagent/outbox', { sessionId: f.sessionA })
+  assert.equal(flushed.statusCode, 200, flushed.body)
+  assert.equal(flushed.json().sent, 1, '本会话 pending 消息必须真的发送')
+  assert.deepEqual(f.acks, ['acme/scope-a#1'], '只允许外发本会话消息')
+  const afterFlush = f.mod.__test.readState()
+  assert.equal(afterFlush.outbox.find((message) => message.id === 'outbox-a').status, 'sent')
+  assert.equal(JSON.stringify(afterFlush.outbox.find((message) => message.id === 'outbox-b')), beforeB, '另一会话 Outbox 必须逐字段不变')
+
+  const mismatch = await f.call('POST', '/session-superagent/watch?sessionId=' + f.sessionA, {
+    action: 'pause', id: f.watcherA, sessionId: f.sessionB,
+  })
+  assert.equal(mismatch.statusCode, 400)
+  assert.equal(JSON.stringify(f.mod.__test.readState()), JSON.stringify(afterFlush))
+
+  const edited = await f.call('POST', '/session-superagent/watch', {
+    repo: 'acme/scope-a', sessionId: f.sessionA, intervalSec: 180,
+  })
+  assert.equal(edited.statusCode, 200, edited.body)
+  assert.equal(f.mod.__test.readState().watchers[f.watcherA].intervalSec, 180)
+  assert.equal(f.mod.__test.readState().watchers[f.watcherB].intervalSec, 120)
+  const paused = await f.call('POST', '/session-superagent/watch', { action: 'pause', id: f.watcherA, sessionId: f.sessionA })
+  assert.equal(paused.statusCode, 200, paused.body)
+  const resumed = await f.call('POST', '/session-superagent/watch', { action: 'resume', id: f.watcherA, sessionId: f.sessionA })
+  assert.equal(resumed.statusCode, 200, resumed.body)
+  const removed = await f.call('POST', '/session-superagent/watch', { action: 'delete', id: f.watcherA, sessionId: f.sessionA })
+  assert.equal(removed.statusCode, 200, removed.body)
+  assert.equal(f.mod.__test.readState().watchers[f.watcherA], undefined)
+  assert.ok(f.mod.__test.readState().watchers[f.watcherB], '删除本会话守不影响另一会话')
+})
+
 test('/state 每条守都带 deferReason（面板按字段统计，不再匹配文案）', async () => {
   await call('POST', '/session-superagent/watch', { repo: 'o/reason', sessionId: 'session-reason', intervalSec: 60 })
   const res = await call('GET', '/session-superagent/state')
