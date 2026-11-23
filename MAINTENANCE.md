@@ -36,7 +36,7 @@
 | 隔离 preflight / 实例 | **exit 0：41 PASS + 3 个预期 SKIP**；`session-ui-review-preflight.log`。profile 缺失/断链/陈旧均 0；2.0.0 headless 实例 `watch_start`、重挂 interval、12 工具通过 |
 | CI 预验 | Node **22.23.5** 按 CI 命令跑 fast preflight：**1415/1415、39 项检查 exit 0**，UI/docs 通过；`session-ui-node22-preflight.log`。Node **24.20.0** 已跑完整 preflight。GitHub PR CI 尚未运行 |
 | 双盲 Debug | task-20 核心重试：25 个真实 HTTP、10 类跨会话写 403、状态哈希不变、公开回归 19/19，**0 findings**；`session-ui-blind-core-retry/REPORT.md`。task-21 UI 原四项复核全部 CLOSED，独立 18/18；`session-ui-blind-ui/REPORT-RECHECK.md` |
-| UI | 新导航真实 Chromium **18/18，exit 0**；旧中栏缺席、会话隔离、全局新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过；`session-ui-review-final-v3/`。**本轮 UI 尚未获用户整版确认，未推送** |
+| UI | 新导航真实 Chromium **18/18，exit 0**；旧中栏缺席、会话隔离、全局新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过；`session-ui-review-final-v3/`。**用户已确认整版 UI 并允许推实验仓，尚未推送** |
 | headless | 无 `webServer` 实例 `watch_start`、重新 import/apply、interval 恢复通过；单守异常不连累好守，`lastError` 落盘有回归 |
 | 双盲修正 | 正常退避/时段外不误报；长期 never、enabled 兼容、optional 缺 stable、异常筛选/Orbit/按仓库错误点均有反向用例；双主题预览含错误点 |
 
@@ -52,9 +52,9 @@
 
 ### 未验证 / 边界
 
-- **目标阻塞（2026-11-23，目标轮 3/4/5 及恢复后的 6/7/8）**：用户整版 UI 确认尚未返回；遵守“确认前不推送”，GitHub PR 与真实 CI 无法启动。已提供双主题截图、静态 Web、可交互实例 <http://127.0.0.1:8878/> 与 `session-ui-live-viewer/启动主理鱼预览.cmd`；所有本地实现、双盲、Node 22/24 预验和 PR 材料均已完成。解除条件是用户明确确认 UI 并允许推实验仓分支。
+- **目标阻塞已解除（2026-11-23）**：用户已在独立交互实例 <http://127.0.0.1:8878/> 完成整版 UI 确认，并明确允许推实验仓分支。此前目标轮 3/4/5 与 6/7/8 的确认门已解除；主仓库仍不改，tag/Release/npm 未授权。
 
-- 新导航已有最终截图和真实 Chromium fixture 点击链路；未验真实 DSH WebView 的读屏/触摸/IME，本轮 UI 尚未获用户整版确认。
+- 新导航已有最终截图、真实 Chromium fixture 点击链路和用户整版确认；未验真实 DSH WebView 的读屏/触摸/IME。
 - 当前 task-20/21 两组双盲均已签收；证据范围是独立 HTTP、真实 Chromium fixture 与官方源码对照，不扩展为真实宿主长期运行通过。
 - 真实 DSH 宿主重载后的长期运行、读屏/触摸/IME；本轮不重启宿主。
 - 真实 Gitee 写操作仍未验；fake/本地归一化不能替代真实仓库回读。
