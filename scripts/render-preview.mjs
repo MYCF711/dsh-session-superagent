@@ -92,8 +92,11 @@ const Desk = slots.get('main#session-superagent')
 const SessionDesk = slots.get('sidebar.right.pane.tab#dsh-session-superagent/session')
 const HeaderUtility = slots.get('conversation.session.header.utilities#session-superagent-current')
 const Orbit = slots.get('conversation.composer.dock#session-superagent-orbit')
-if (!Desk || !SessionDesk || !HeaderUtility) {
-  throw new Error('全局页/会话右栏/头部入口注册不完整，已注册：' + [...slots.keys()].join(','))
+if (!Desk || !SessionDesk || !HeaderUtility || !Orbit) {
+  throw new Error('全局页/会话右栏/头部/Dock 入口注册不完整，已注册：' + [...slots.keys()].join(','))
+}
+if ([...slots.keys()].some((key) => key.startsWith('conversation.view#'))) {
+  throw new Error('旧 conversation.view 中栏注册必须保持删除')
 }
 if (tabDefinitions.length !== 1 || tabDefinitions[0].kind !== 'sessionSuperagent') {
   throw new Error('sidebarRightTabs definition 未按 sessionSuperagent 注册')
@@ -334,7 +337,7 @@ const stalledSnapshot = {
 // hook 槽顺序必须与 client.js 里 SuperagentPage 的 useState 顺序完全一致：
 // snap, tab, notice, form, token, goalDraft, goalTouched, [], editing, draft, search,
 // glossary, update, checking, settingsSection
-const blankForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: false, workdir: '' }
+const blankForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: false, workdir: '', createSessionId: 's1' }
 const editKey = 'MYCF711/dsh-session-superagent#s1'
 const editDraft = {
   intervalSec: '60', labels: 'ai-fix', ignoreLabels: '', assignee: '', activeHours: '09:00-12:00,14:00-23:00',
@@ -530,8 +533,8 @@ const html = '<!doctype html><meta charset="utf-8"><title>主理鱼面板预览�
   + (process.argv.includes('--outline') ? '.dt-page > * { outline: 1px dashed #f0f !important; }' : '')
   + '</style>'
   + (process.argv.includes('--measure') ? '<script>window.addEventListener("load", function () { var body = document.querySelectorAll(".dt-ticket-body")[0]; var rows = []; rows.push("body h" + Math.round(body.getBoundingClientRect().height)); Array.prototype.forEach.call(body.children, function (el) { var r = el.getBoundingClientRect(); rows.push((el.className.split(" ")[0] || el.tagName) + " h" + Math.round(r.height) + " " + (el.textContent || "").slice(0, 14)); }); var pre = document.createElement("pre"); pre.id = "measure"; pre.textContent = rows.join(" | "); document.body.insertBefore(pre, document.body.firstChild); });</script>' : '')
-  + '<div style="font:13px/1.5 system-ui;opacity:.75">主理鱼面板静态预览 —— 真实 client.js 渲染的 DOM + 移植的官方 CSS。'
-  + '兜底色值只是近似（真机以宿主注入的 --dsw-alias-* 为准），这里用来发现「某个主题下颜色写死或漏 token」。</div>'
+  + '<div style="font:13px/1.5 system-ui;opacity:.75">主理鱼最终导航静态预览（无旧 conversation.view 中栏）—— 真实 client.js 渲染的 DOM + 移植的官方 CSS。'
+  + '仅保留左侧全局中枢、会话右栏、头部入口与 Dock/Orbit；兜底色值只是近似（真机以宿主注入的 --dsw-alias-* 为准）。</div>'
   + (ONLY_POPOVER
     ? (process.argv.includes('--dark') ? themePopover('深色主题', darkTokens) : themePopover('浅色主题', lightTokens) + themePopover('深色主题', darkTokens))
     : (process.argv.includes('--dark') ? themeBlock('深色主题', darkTokens) : themeBlock('浅色主题', lightTokens) + themeBlock('深色主题', darkTokens)))

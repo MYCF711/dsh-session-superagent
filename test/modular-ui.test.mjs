@@ -174,7 +174,7 @@ function emptyModular(locale = 'zh') {
 
 function renderModular(modular, { actions, onAction, sessionStorage } = {}) {
   const client = loadClient({ sessionStorage })
-  const desk = client.registrations.find((registration) => registration.opts.id === 'session-superagent-desk')
+  const desk = client.registrations.find((registration) => registration.opts.name === 'main' && registration.opts.key === 'session-superagent')
   const snap = {
     loading: false,
     error: null,
@@ -219,7 +219,7 @@ function prepareModularQueue(queue, lastIndex) {
 
 test('模块化视图只在 body.modular 存在时接入主面板，并完整渲染中文投影', () => {
   const plain = loadClient()
-  const plainDesk = plain.registrations.find((registration) => registration.opts.id === 'session-superagent-desk')
+  const plainDesk = plain.registrations.find((registration) => registration.opts.name === 'main' && registration.opts.key === 'session-superagent')
   const plainSnap = { loading: false, error: null, body: { credentials: {}, watchers: [] } }
   const plainTabs = walk(plain.render(plainDesk, deskQueue(plainSnap)))
     .filter((node) => node.type === 'button' && node.props.role === 'tab')
@@ -524,14 +524,28 @@ test('宿主服务缺失时头部明确禁用，Dock 显示旧操作列表降级
   assert.ok(registered(client, 'main', GLOBAL_PANEL_ID), '缺右栏服务不能连累左侧全局页')
 })
 
-test('旧中栏在 layout 可用时重定向到同一个全局 panel id', () => {
+test('旧中栏注册已删除，品牌改名仍重注册右栏 definition 与标题', () => {
   const { calls, services } = navigationFixture()
-  const client = loadClient({ services })
-  const desk = registered(client, 'conversation.view', 'session-superagent-desk')
-  const nodes = walk(client.render(desk, [null]))
-  client.runEffects()
-  assert.deepEqual(calls.selectPanel, [GLOBAL_PANEL_ID])
-  assert.ok(flatText(nodes).includes('旧中栏入口已迁移到左侧全局中枢。'))
+  const values = new Map()
+  const localStorage = {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  }
+  const client = loadClient({ services, localStorage })
+  assert.equal(client.registrations.some((item) => item.opts.name === 'conversation.view'), false)
+  assert.equal(calls.definitions.length, 1)
+
+  localStorage.setItem('dsh-session-superagent.tab-name', '夜猫')
+  assert.equal(client.dispatchWindowEvent('storage', { key: 'dsh-session-superagent.tab-name', newValue: '夜猫' }), 1)
+  assert.equal(calls.definitions.length, 2, 'definition 必须先释放再重注册')
+  assert.equal(calls.definitions.at(-1).title(), '夜猫')
+  assert.equal(calls.definitions.at(-1).guide[0].title(), '夜猫')
+  const title = client.liveRegistrations().find((item) => item.opts.name === 'sidebar.right.pane.tab.title'
+    && item.opts.key === RIGHT_TAB_ID)
+  assert.ok(flatText(walk(client.render(title, []))).includes('夜猫'))
+  assert.ok(registered(client, 'main', GLOBAL_PANEL_ID))
+  assert.ok(registered(client, 'conversation.composer.dock', 'session-superagent-orbit'))
 })
 
 test('全局/会话读取显式分流；右栏缺 sessionId 时不回退读取全局', async () => {

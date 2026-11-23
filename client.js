@@ -1,10 +1,10 @@
 /**
  * dsh-session-superagent — browser half.
  *
- * Registers one list entry into `conversation.view` (the centre-column view
- * ring: chat / trajectory / waterfall live there), so the panel appears as a
- * tab beside them. It reads the read-only host route the server half
- * registers; no credential ever crosses this boundary.
+ * Registers the global workspace into `main` / `sidebar.panellist`, and the
+ * current-session workspace into the official right-sidebar slots. It reads
+ * the read-only host route the server half registers; no credential ever
+ * crosses this boundary.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-session-superagent',
@@ -526,15 +526,11 @@ window.__ModuleLoader__.load({
       return parseSemver(value) !== null
     }
     // SEMVER_COMPARATOR_SOURCE_END
-    // ── 页签名称（`conversation.view` 的 label）────────────────────────────────
-    // 宿主只在 register()/dispose() 时重算页签文案：ui-conversation 的 viewTabs() 每次刷新都读
-    // `resolveSlotLabel(entry.options.label)`，而刷新由 `slots.subscribe('conversation.view')` 驱动
-    // （register/dispose → markDirty → 微任务 flush）。所以原地改 `options.label` 不会重画 ——
-    // 改名必须「先 dispose、再按同 id/order/component 重注册」，保证列表里始终只有一条。
-    //
+    // ── 入口名称（左侧全局中枢 / 会话右栏标题）───────────────────────────────
     // 名称只有一份品牌语义（issue #11 的 brandName，`/state` 下发），这里不另造字段：
     //   本地显示覆盖（本浏览器 localStorage）> /state.brandName > 默认「主理鱼」。
-    // 覆盖只改这一个页签，不动面板标题、唤醒抬头、插件包名和 ack 标签。
+    // 左栏、右栏 definition 与右栏标题在改名时先 dispose 再按原 id/key/component 重注册，
+    // 让宿主立刻重算文案；覆盖不动唤醒抬头、插件包名和 ack 标签。
     const TAB_NAME_DEFAULT = '主理鱼'
     const TAB_NAME_STORAGE_KEY = 'dsh-session-superagent.tab-name'
     // 页签条不允许无限长：超过 24 个码点就截断。按码点切（Array.from）而不是 UTF-16 单元，
@@ -3676,8 +3672,6 @@ window.__ModuleLoader__.load({
       // 同一个领域页面服务两个宿主容器；scope 只决定数据范围，不复制 watcher/Ticket/草稿动作。
       const scope = props.scope === 'global' ? 'global' : 'session'
       const sessionId = scope === 'session' ? props.sessionId : null
-      const legacyGlobal = props.legacyGlobal === true
-      const legacyEntry = props.legacyEntry === true
       const missingSession = scope === 'session' && !sessionId
       /** 暂停原因码 → 人话（服务端 deferReason 是唯一来源）。 */
       const DEFER_LABELS = {
@@ -3699,7 +3693,7 @@ window.__ModuleLoader__.load({
       let sessionCatalog = null
       let sessionCatalogMessage = null
       let sessionCatalogIds = []
-      if (scope === 'global' && !legacyGlobal) {
+      if (scope === 'global') {
         try {
           if (!hostSessions || !hostSessions.list || typeof hostSessions.list.getSnapshot !== 'function') {
             sessionCatalogMessage = '宿主 sessions catalog 不可用，无法选择目标会话。'
@@ -3722,7 +3716,7 @@ window.__ModuleLoader__.load({
       }
       const createSessionReady = scope === 'session'
         ? Boolean(sessionId)
-        : Boolean(!legacyGlobal && sessionCatalog && sessionCatalog.phase === 'ready'
+        : Boolean(sessionCatalog && sessionCatalog.phase === 'ready'
           && createSessionId && sessionCatalog.byId && sessionCatalog.byId[createSessionId])
       const [token, setToken] = useState('')
       const [goalDraft, setGoalDraft] = useState('')
@@ -3849,12 +3843,9 @@ window.__ModuleLoader__.load({
         if (missingSession) return Promise.resolve(null)
         const seq = ++loadSeqRef.current
         const job = (async () => {
-          // 新全局页显式声明 scope=global；旧中栏在无 layout 的宿主里保留原 /state 兼容读取。
-          const statePath = legacyGlobal
-            ? '/state'
-            : scope === 'global'
-              ? '/state?scope=global'
-              : '/state?sessionId=' + encodeURIComponent(String(sessionId))
+          const statePath = scope === 'global'
+            ? '/state?scope=global'
+            : '/state?sessionId=' + encodeURIComponent(String(sessionId))
           const etag = readStateEtag(statePath)
           try {
             const payload = await call(statePath, etag ? { headers: { 'if-none-match': etag } } : undefined)
@@ -3890,12 +3881,12 @@ window.__ModuleLoader__.load({
         })()
         latestLoadRef.current = job
         return job
-      }, [sessionId, scope, legacyGlobal, missingSession])
+      }, [sessionId, scope, missingSession])
 
       useEffect(() => { ensurePortedCss() }, [])
       usePoll(load, POLL_MS, !missingSession)
       useEffect(() => {
-        if (scope !== 'global' || legacyGlobal || !hostSessions || !hostSessions.list
+        if (scope !== 'global' || !hostSessions || !hostSessions.list
           || typeof hostSessions.list.getSnapshot !== 'function' || typeof hostSessions.refresh !== 'function') return undefined
         let current
         try { current = hostSessions.list.getSnapshot() } catch { return undefined }
@@ -3907,7 +3898,7 @@ window.__ModuleLoader__.load({
             if (alive) setNotice({ ok: false, text: '会话目录读取失败：' + String((error && error.message) || error) })
           })
         return () => { alive = false }
-      }, [scope, legacyGlobal, load])
+      }, [scope, load])
 
       const body = snap.body || {}
       // 默认值提示从后端读：写死 12/3/6 会在常量变化后变成谎话（JSON Schema 的 default 也是这个用法）
@@ -3918,8 +3909,8 @@ window.__ModuleLoader__.load({
       const watchers = body.watchers || []
       const modular = body.modular && typeof body.modular === 'object' ? body.modular : null
       const hasExternalModularActions = Boolean(props.modularActions || typeof props.onModularAction === 'function')
-      // 新会话右栏的写操作显式携带 scope；旧中栏兼容入口不改变既有请求契约。
-      const scopedWriteSessionId = scope === 'session' && !legacyEntry ? sessionId : null
+      // 会话右栏的写操作显式携带 scope，全局动作不绑定某个当前会话。
+      const scopedWriteSessionId = scope === 'session' ? sessionId : null
       const withWriteScope = (payload) => scopedWriteSessionId ? { ...payload, sessionId: scopedWriteSessionId } : payload
       const modularActions = {
         ...(modular && modular.actions === true && !hasExternalModularActions ? {
@@ -4909,7 +4900,7 @@ window.__ModuleLoader__.load({
           submitLabel: scope === 'global'
             ? (createSessionReady ? '添加到所选会话' : '选择目标会话')
             : (sessionId ? '添加到当前会话' : '先打开一个会话'),
-          targetControl: scope === 'global' && !legacyGlobal ? (busy) => h(Field, { id: 'watcher-new-session', label: '目标会话' },
+          targetControl: scope === 'global' ? (busy) => h(Field, { id: 'watcher-new-session', label: '目标会话' },
             h(React.Fragment, null,
               h('select', {
                 id: 'watcher-new-session', className: 'dt-select', 'aria-label': '目标会话',
@@ -5315,7 +5306,7 @@ window.__ModuleLoader__.load({
           h('div', null,
             h('h1', { className: 'dt-page-title' }, BRAND),
             h('span', { className: 'dt-hint' },
-              scope === 'global' && !legacyGlobal
+              scope === 'global'
                 ? '全局中枢 · 全部项目会话的 watcher、Ticket、执行、Outbox 与健康'
                 : (body.sessionTitle ? '会话：' + body.sessionTitle + ' · ' : '')
                   + (sessionId ? '盯办 + 主动办：仓库有动静就叫醒本会话' : '（在会话里打开本面板，才能把仓库绑到会话上）'))),
@@ -5439,36 +5430,6 @@ window.__ModuleLoader__.load({
     }
 
 
-    // 旧中栏只负责迁移；没有 layout 的老宿主才保留原页面作为兼容回退。
-    function LegacySuperagentPage(props = {}) {
-      // 同一渲染层直接调用，保留旧宿主/测试在注册后即执行 Component 的契约。
-      return SuperagentPage({
-        ...props,
-        scope: props.sessionId ? 'session' : 'global',
-        legacyGlobal: !props.sessionId,
-        legacyEntry: true,
-      })
-    }
-
-    function LegacySuperagentRedirect() {
-      const [error, setError] = useState(null)
-      const redirect = () => {
-        try {
-          if (!hostLayout || typeof hostLayout.selectPanel !== 'function') throw new Error('宿主 layout.selectPanel 服务不存在')
-          hostLayout.selectPanel(GLOBAL_PANEL_ID)
-          setError(null)
-        } catch (failure) {
-          setError(String((failure && failure.message) || failure))
-        }
-      }
-      useEffect(() => { redirect() }, [])
-      return h('div', { className: 'dt-page' }, h('div', { className: 'dt-column' },
-        h('h1', { className: 'dt-page-title' }, tabNameLabel()),
-        h(Hint, null, '旧中栏入口已迁移到左侧全局中枢。'),
-        error ? h('p', { className: 'dt-error', role: 'alert' }, '打开全局中枢失败：' + error) : null,
-        h('div', null, h(Btn, { size: 'sm', variant: 'outline', onClick: redirect }, '打开左侧全局中枢'))))
-    }
-
     function SuperagentGlobalPage(props = {}) {
       return h(SuperagentPage, { ...props, scope: 'global' })
     }
@@ -5527,14 +5488,35 @@ window.__ModuleLoader__.load({
         // 之前只在面板组件挂载时注入，没打开过面板就直接点圆环 → 弹层没有样式（0.9.159 才补上那次调用）。
         try { ensurePortedCss() } catch {}
 
-        // ① the 主理鱼 tab in the centre-column view ring
-        //    页签名可设置（本地显示覆盖 > /state.brandName > 默认「主理鱼」）。
-        //    宿主只在 register/dispose 时重算文案，所以改名走「先释放、再同 id/order/component
-        //    重注册」—— 先 dispose 保证列表里不会出现第二条同 id 的注册。
+        // 品牌名同时驱动左栏、右栏 definition 与右栏标题。旧中栏删除后，
+        // 改名订阅仍保留在这些存活入口上：先释放原注册，再按同 id/key/component 重注册。
         tabNameOverride = readTabNameOverride()
-        const legacyComponent = hostLayout && typeof hostLayout.selectPanel === 'function'
-          ? LegacySuperagentRedirect
-          : LegacySuperagentPage
+        const mountBrandEntry = (mount, failureKey) => {
+          let dispose = null
+          const unmount = () => {
+            if (!dispose) return
+            const current = dispose
+            dispose = null
+            try { current() } catch {}
+          }
+          const remount = () => {
+            unmount()
+            dispose = mount()
+          }
+          try {
+            remount()
+            const stopWatching = subscribeTabName(() => {
+              try { remount() } catch (error) {
+                note(failureKey, String((error && error.message) || error))
+              }
+            })
+            return () => { stopWatching(); unmount() }
+          } catch (error) {
+            note(failureKey, String((error && error.message) || error))
+            unmount()
+            return undefined
+          }
+        }
         const openSession = async (id) => {
           const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : ctx.sessions
           const uiWorkspace = typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : ctx.uiWorkspace
@@ -5550,7 +5532,7 @@ window.__ModuleLoader__.load({
         // 左侧全局中枢：main 与 sidebar.panellist 使用同一个 panel id。
         ctx.effect(() => {
           if (!hostLayout || typeof hostLayout.selectPanel !== 'function') {
-            noteOnce('layout-unavailable', 'layout.selectPanel 服务不存在；保留旧中栏，不注册无法选择的全局入口')
+            noteOnce('layout-unavailable', 'layout.selectPanel 服务不存在；不注册无法选择的全局入口')
             return undefined
           }
           try {
@@ -5564,15 +5546,10 @@ window.__ModuleLoader__.load({
         })
         ctx.effect(() => {
           if (!hostLayout || typeof hostLayout.selectPanel !== 'function') return undefined
-          try {
-            return ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-              name: 'sidebar.panellist', id: GLOBAL_PANEL_ID, order: 20,
-              label: () => tabNameLabel(),
-            }, SuperagentNavIcon))
-          } catch (error) {
-            note('global-sidebar-fail', String((error && error.message) || error))
-            return undefined
-          }
+          return mountBrandEntry(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+            name: 'sidebar.panellist', id: GLOBAL_PANEL_ID, order: 20,
+            label: () => tabNameLabel(),
+          }, SuperagentNavIcon)), 'global-sidebar-fail')
         })
 
         // 右栏 page type：definition.id 用于 keyed body/title 分派，definition.kind 用于 openTab。
@@ -5581,24 +5558,19 @@ window.__ModuleLoader__.load({
             noteOnce('sidebar-right-tabs-unavailable', 'sidebarRightTabs.register 服务不存在；会话头部入口显示不可用原因')
             return undefined
           }
-          try {
-            return hostSidebarRightTabs.register({
-              id: RIGHT_TAB_ID,
-              kind: RIGHT_TAB_KIND,
-              priority: 'builtin',
+          return mountBrandEntry(() => hostSidebarRightTabs.register({
+            id: RIGHT_TAB_ID,
+            kind: RIGHT_TAB_KIND,
+            priority: 'builtin',
+            title: () => tabNameLabel(),
+            guide: [{
+              id: 'session-superagent',
+              order: 20,
               title: () => tabNameLabel(),
-              guide: [{
-                id: 'session-superagent',
-                order: 20,
-                title: () => tabNameLabel(),
-                description: () => '查看当前项目会话的 watcher、Ticket、执行、Outbox 与草稿',
-                icon: SuperagentNavIcon,
-              }],
-            })
-          } catch (error) {
-            note('right-definition-fail', String((error && error.message) || error))
-            return undefined
-          }
+              description: () => '查看当前项目会话的 watcher、Ticket、执行、Outbox 与草稿',
+              icon: SuperagentNavIcon,
+            }],
+          }), 'right-definition-fail')
         })
         ctx.effect(() => {
           if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
@@ -5613,14 +5585,9 @@ window.__ModuleLoader__.load({
         })
         ctx.effect(() => {
           if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
-          try {
-            return ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
-              name: 'sidebar.right.pane.tab.title', key: RIGHT_TAB_ID,
-            }, SuperagentRightTabTitle))
-          } catch (error) {
-            note('right-title-fail', String((error && error.message) || error))
-            return undefined
-          }
+          return mountBrandEntry(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+            name: 'sidebar.right.pane.tab.title', key: RIGHT_TAB_ID,
+          }, SuperagentRightTabTitle)), 'right-title-fail')
         })
         ctx.effect(() => {
           if (!hostLayout && !hostSidebarRight && !hostSidebarRightTabs) return undefined
@@ -5634,68 +5601,32 @@ window.__ModuleLoader__.load({
           }
         })
 
+        // 同一浏览器的其它页面改了名字：storage 事件只当触发器，真值回 localStorage 读。
+        // 该监听独立于任何页面是否打开，确保左栏/右栏与设置草稿都收到改名通知。
         ctx.effect(() => {
+          const onStorage = (event) => {
+            if (!event) return
+            // localStorage.clear() 的事件 key 是 null —— 那是「所有覆盖都没了」，按删除处理。
+            const cleared = event.key === null || event.key === undefined
+            if (!cleared && event.key !== TAB_NAME_STORAGE_KEY) return
+            const before = tabNameLabel()
+            tabNameOverride = (cleared || event.newValue === null || event.newValue === undefined)
+              ? null
+              : readTabNameOverride()
+            if (tabNameLabel() === before) return
+            try { notifyTabName(before) } catch {}
+          }
           try {
-            return ctx.slots.inject('conversation.view', () => {
-              let disposeDesk = null
-              const mountDesk = () => {
-                disposeDesk = ctx.slots.register({
-                  name: 'conversation.view',
-                  id: 'session-superagent-desk',
-                  order: 30,
-                  label: tabNameLabel(),
-                }, legacyComponent)
+            if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+              window.addEventListener('storage', onStorage)
+            }
+          } catch {}
+          return () => {
+            try {
+              if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('storage', onStorage)
               }
-              const unmountDesk = () => {
-                if (!disposeDesk) return
-                const dispose = disposeDesk
-                disposeDesk = null
-                try { dispose() } catch {}
-              }
-              mountDesk()
-              note('desk-registered', 'ok')
-              const stopWatching = subscribeTabName(() => {
-                try {
-                  unmountDesk()
-                  mountDesk()
-                  note('desk-registered', 'renamed')
-                } catch (error) {
-                  note('desk-fail', String((error && error.message) || error))
-                }
-              })
-              // 同一浏览器的其它页面（另一标签页 / 另一个窗口）改了名字：storage 事件只当触发器，
-              // 真值一律回 localStorage 读最新的 —— 别人设了**新名字**要跟着同步，不能清掉覆盖回品牌名；
-              // 只有对方删除（newValue === null）才回品牌名。
-              const onStorage = (event) => {
-                if (!event) return
-                // localStorage.clear() 的事件 key 是 null —— 那是「所有覆盖都没了」，按删除处理。
-                const cleared = event.key === null || event.key === undefined
-                if (!cleared && event.key !== TAB_NAME_STORAGE_KEY) return
-                const before = tabNameLabel()
-                tabNameOverride = (cleared || event.newValue === null || event.newValue === undefined)
-                  ? null
-                  : readTabNameOverride()
-                if (tabNameLabel() === before) return
-                try { notifyTabName(before) } catch {}
-              }
-              try {
-                if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-                  window.addEventListener('storage', onStorage)
-                }
-              } catch {}
-              return () => {
-                stopWatching()
-                try {
-                  if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-                    window.removeEventListener('storage', onStorage)
-                  }
-                } catch {}
-                unmountDesk()
-              }
-            })
-          } catch (error) {
-            note('desk-fail', String((error && error.message) || error))
-            return undefined
+            } catch {}
           }
         })
 

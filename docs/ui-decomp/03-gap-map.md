@@ -4,6 +4,14 @@
 >
 > 本文件只做静态只读核对与后续实施清单；本次没有改 `client.js`、没有启动 GUI、没有 commit。
 
+## 实施回写（2.0.0 · 旧中栏退出）
+
+- **官方**：全局管理页使用 `main[key]` + `sidebar.panellist[id]`，当前 Session 工作台使用 header utility、右栏 definition 与 keyed body/title；`conversation.view` 只属于对话中栏视图环。
+- **我们**：删除主理鱼 `conversation.view` 注册、Legacy 页面与重定向组件，不再保留旧中栏兼容主页。保留左侧 `session-superagent`、右栏 `dsh-session-superagent/session` 的 definition/body/title、头部 `session-superagent-current` 和 Dock/Orbit；兼容 API、watcher 数据与服务端 scope 均未改。
+- **品牌改名**：设置里的本地覆盖与 `/state.brandName` 继续共用同一事实源。`subscribeTabName` 改在左栏、右栏 definition 和右栏标题上先 dispose 再按原 id/key/component 重注册；跨页面 `storage` 监听独立保留，不随旧中栏删除。
+- **测试与预览**：`client + modular-ui` **225/225**，UI audit **11/11**；预览生成器显式拒绝任何 `conversation.view` 注册，最终双主题产物为 `tmp-artifacts/task-25/preview.html`，截图为同目录 `light.png` / `dark.png`。
+- **未验**：本任务只复跑组件桩、静态预览与既有浏览器可模拟结构，不把真实 DSH WebView 的读屏、触摸、IME 或用户整版确认写成通过；不推送。
+
 ## 实施回写（1.1.0 · 共享全局页与会话右栏）
 
 - **官方**：DSH `0.2.2-rc.2`（`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`）的 `main[key]` + `sidebar.panellist[id]`、`conversation.session.header.utilities`、`sidebarRightTabs` definition + `sidebar.right.pane.tab(.title)` 与标准 `guide`；证据见 `docs/ui-decomp/04-会话级导航.md`。
