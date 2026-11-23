@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-23 —— 会话级导航与 session scope 隔离（实验候选）
+
 ### Added
 
 - **左侧全局中枢 + 会话右栏工作台**：官方自动化任务与 Forge 使用独立 main、会话头部入口和右栏共享页面；我们用同一个 `SuperagentPage` 按 `global/session` scope 复用 watcher、Ticket、Outbox、草稿、确认与 Session 导航，避免复制三套状态。左侧全局页可选择真实目标会话新建 watcher；会话头部图标、Dock/Orbit 与开始页标准卡打开 `sessionSuperagent` 右栏，旧中栏只保留迁移。

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MYCF711/dsh-session-superagent/releases"><img src="https://img.shields.io/badge/version-1.1.0-green.svg" alt="version"></a>
+  <a href="https://github.com/MYCF711/dsh-session-superagent/releases"><img src="https://img.shields.io/badge/version-2.0.0-green.svg" alt="version"></a>
   <a href="https://www.npmjs.com/package/dsh-session-superagent"><img src="https://img.shields.io/npm/v/dsh-session-superagent?color=4D6BFE" alt="npm"></a>
   <img src="https://img.shields.io/badge/license-MIT-4D6BFE" alt="license">
 </p>
@@ -172,7 +172,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-已通过 1411 项单测、20 房边界、11 项 UI 静态审计（1.1.0 实验仓候选）。44 项隔离 preflight 全过（41 PASS + 3 SKIP）、npm dry-run 打包与另起实例通过。两组双盲 Debug 已执行，B 发现的旧版高项已修复并经真实 Chromium 复测；双主题与 700px 预览已出图，UI 已确认。新增无 `webServer` 的 headless 实例：真实 `watch_start`、重新 import/apply、interval 恢复和单守错误落盘均通过；仅允许独立实验仓分支，不推主仓库。
+已通过 1411 项单测、20 房边界、11 项 UI 静态审计（2.0.0 实验仓候选）。44 项隔离 preflight 全过（41 PASS + 3 SKIP）、npm dry-run 打包与另起实例通过。两组双盲 Debug 已执行，B 发现的旧版高项已修复并经真实 Chromium 复测；双主题与 700px 预览已出图，UI 已确认。新增无 `webServer` 的 headless 实例：真实 `watch_start`、重新 import/apply、interval 恢复和单守错误落盘均通过；仅允许独立实验仓分支，不推主仓库。
 
 ### 贡献归属门禁
 
@@ -188,7 +188,7 @@ node scripts/check-pr-attribution.mjs --pr 49 --against 41 --repo MYCF711/dsh-se
 
 | 说法 | 来源 |
 |---|---|
-| 实验候选 `1.1.0` | [package.json](package.json)；未发布 tag / Release / npm；分支仅用于独立实验仓 |
+| 实验候选 `2.0.0` | [package.json](package.json)；未发布 tag / Release / npm；分支仅用于独立实验仓 |
 | 项目起点 | [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype) |
 | DSH 原生 UI | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)、`$DSH_HOME/DSH-UI-official.md`、`docs/ui-decomp/` |
 | 图标 | [DSH-X/docs/icon-app.png](https://github.com/yyh-001/DSH-X/blob/Staging/docs/icon-app.png)（MIT） |

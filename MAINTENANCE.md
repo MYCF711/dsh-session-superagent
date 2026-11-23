@@ -9,7 +9,7 @@
 |---|---|
 | 仓库 | 独立实验仓 `MYCF711/dsh-session-superagent-refactor`（上游 `MYCF711/dsh-session-superagent`） |
 | npm 包名 | `dsh-session-superagent` |
-| 当前候选版本 | `1.1.0`（工作树候选；**尚未推 tag / Release / npm**） |
+| 当前候选版本 | `2.0.0`（工作树候选；**尚未推 tag / Release / npm**） |
 | 最近已发布版本 | 上游 `0.11.0`；本轮候选不写成已发布 |
 | 形态 | DSH 插件：12 个工具 + 16 条路由 + 客户端面板与状态栏圆环 |
 | 目标宿主 | DeepSeek Harness `>=0.2.2-rc.1 <0.3.0-0`；Node ≥ 22.19；需已登录 `gh` CLI |
@@ -19,7 +19,7 @@
 ```text
 基线        上游 main@95b5a72（水位 v2 / 1.0.0）
 工作树      session-superagent-ui（基于 c80353f）；团队实现会话级导航，未推送，主仓库不改
-候选版本    1.1.0；20 个最小房间 + modular-runtime + modular-outbox-host
+候选版本    2.0.0；20 个最小房间 + modular-runtime + modular-outbox-host
 默认行为    旧 watcher 仍 inline；只有显式 executionMode=worker 才创建独立 worker Session
 当前目标    左侧全局中枢 + 会话右栏；服务端 session scope；旧中栏验收后退出
 统一契约    docs/设计-会话级导航与运行时.md（结论、要求、目标、验收与 10 条踩坑）
