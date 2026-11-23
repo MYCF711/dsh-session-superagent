@@ -18,9 +18,12 @@
 
 ```text
 基线        上游 main@95b5a72（水位 v2 / 1.0.0）
-工作树      task-headless-polling（基于 b0b9d6a）；实验仓 PR #1 已开，未合并，不推主分支
+工作树      session-superagent-ui（基于 c80353f）；团队实现会话级导航，未推送，主仓库不改
 候选版本    1.1.0；20 个最小房间 + modular-runtime + modular-outbox-host
 默认行为    旧 watcher 仍 inline；只有显式 executionMode=worker 才创建独立 worker Session
+当前目标    左侧全局中枢 + 会话右栏；服务端 session scope；旧中栏验收后退出
+统一契约    docs/设计-会话级导航与运行时.md（结论、要求、目标、验收与 10 条踩坑）
+团队任务    task-16 后端 scope；task-17 官方 slot；task-18 共享 UI；task-19 集成；task-20/21 双盲
 ```
 
 | 资产 / 验证 | 当前结果 |
@@ -56,6 +59,6 @@
 
 ## 三、下一步
 
-1. 实验仓 PR #1 已开，保持未合并；审查发现问题只追加 commit，禁止强推和直接推主分支。
-2. 最终 head 的 Node 22/24 CI 已通过（run 45111266136）；补充复验未产出报告且不计通过，原两组双盲报告与修复回归证据保留；不发布 tag / Release / npm。
+1. 按 task-16/17 → task-18 → task-19 → task-20/21 推进；写作用域不重叠，Lead 负责最终 diff 与集成。
+2. 全量、隔离实例、双主题、真实交互和两组双盲未完成不得宣称完成；最终 UI 确认前不推送，不发布 tag / Release / npm。
 3. 有可写 Gitee 测试 issue/PR 后，补真实 ack + 写后重读并清理，再关闭该未验项。
