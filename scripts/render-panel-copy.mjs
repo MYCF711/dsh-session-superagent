@@ -44,7 +44,7 @@ const snap = {
 }
 
 const { registrations, render } = loadClient()
-const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
 
 // 触发页同时收集 Issue 与 PR 两种类型：审计三项只在 PR 显示，onlyNewComments 只在 Issue 显示。
 // 只在本脚本里改（deskForm 是模块级对象，独立进程跑完即弃），不动测试夹具的默认形态。
