@@ -8,12 +8,12 @@
 
 ### Added
 
-- **左侧全局中枢 + 会话右栏工作台**：官方自动化任务与 Forge 使用独立 main、会话头部入口和右栏共享页面；我们用同一个 `SuperagentPage` 按 `global/session` scope 复用 watcher、Ticket、Outbox、草稿、确认与 Session 导航，避免复制三套状态。左侧全局页可选择真实目标会话新建 watcher；会话头部图标、Dock/Orbit 与开始页标准卡打开 `sessionSuperagent` 右栏，旧中栏只保留迁移。
+- **左侧全局中枢 + 会话右栏工作台**：官方自动化任务与 Forge 使用独立 main、会话头部入口和右栏共享页面；我们用同一个 `SuperagentPage` 按 `global/session` scope 复用 watcher、Ticket、Outbox、草稿、确认与 Session 导航，避免复制三套状态。左侧全局页可选择真实目标会话新建 watcher；会话头部图标、Dock/Orbit 与开始页标准卡打开 `sessionSuperagent` 右栏，旧中栏注册已删除。
 - **服务端会话隔离**：`/state?sessionId` 真实过滤 watcher/Ticket/Outbox/事件/草稿，显式 `scope=global` 才返回全量目标与草稿；watch/Ticket/draft/Outbox 跨会话写入返回 403 且状态不变。会话 Outbox flush 不 recover 或触达其他会话，executor 全局暂停只允许全局入口。
 
 ### Changed
 
-- **中栏不再承担主理鱼主页**：有官方 `layout.selectPanel` 时旧入口重定向左侧全局中枢；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作，不伪造导航。新导航的真实宿主交互、两组双盲和用户整版确认仍是发布门。
+- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1411/1411、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 10/10；两组双盲和用户整版确认仍是发布门。
 
 ### Fixed
 

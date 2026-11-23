@@ -172,7 +172,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-已通过 1411 项单测、20 房边界、11 项 UI 静态审计（2.0.0 实验仓候选）。44 项隔离 preflight 全过（41 PASS + 3 SKIP）、npm dry-run 打包与另起实例通过。两组双盲 Debug 已执行，B 发现的旧版高项已修复并经真实 Chromium 复测；双主题与 700px 预览已出图，UI 已确认。新增无 `webServer` 的 headless 实例：真实 `watch_start`、重新 import/apply、interval 恢复和单守错误落盘均通过；仅允许独立实验仓分支，不推主仓库。
+已通过 1411 项单测、20 房边界、11 项 UI 静态审计（2.0.0 实验仓候选）。隔离 preflight **exit 0：41 PASS + 3 个预期 SKIP**，profile 0 漂移；2.0.0 headless 实例启动、重挂 interval 与 12 工具通过。新导航真实 Chromium **10/10**：旧中栏缺席、会话隔离、全局目标会话新建、双主题与产品 700px 通过。当前版本的 task-20/21 两组双盲和用户整版 UI 确认尚未完成；未推送、未打 tag、未发布，主仓库不改。
 
 ### 贡献归属门禁
 
