@@ -34,7 +34,7 @@
 | 生产接线 | worker/inline、bot/系统事件、ack 操作 ID、watcher 世代、marker 分页、执行模式切换已定向复验 |
 | 草稿 | revision 乐观锁 + 旧值 409；前端保留另一标签页未保存文本 |
 | 隔离 preflight / 实例 | **exit 0：41 PASS + 3 个预期 SKIP**；`session-ui-release-preflight-v2.log`。profile 缺失/断链/陈旧均 0；2.0.0 headless 实例 `watch_start`、重挂 interval、12 工具通过 |
-| 双盲 Debug | task-13 A：**38/38，0 findings**；task-14 B：冻结旧版发现 High 4，当前已修停止确认、草稿恢复、详情/Session 导航与 worker 暂停；报告见 `blind-debug-a/REPORT.md`、`blind-debug-b/REPORT.md` |
+| 双盲 Debug | task-20 核心重试：25 个真实 HTTP、10 类跨会话写 403、状态哈希不变、公开回归 19/19，**0 findings**；`session-ui-blind-core-retry/REPORT.md`。task-21 UI 原四项复核全部 CLOSED，独立 18/18；`session-ui-blind-ui/REPORT-RECHECK.md` |
 | UI | 新导航真实 Chromium **18/18，exit 0**；旧中栏缺席、会话隔离、全局新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过；`session-ui-review-final-v3/`。**本轮 UI 尚未获用户整版确认，未推送** |
 | headless | 无 `webServer` 实例 `watch_start`、重新 import/apply、interval 恢复通过；单守异常不连累好守，`lastError` 落盘有回归 |
 | 双盲修正 | 正常退避/时段外不误报；长期 never、enabled 兼容、optional 缺 stable、异常筛选/Orbit/按仓库错误点均有反向用例；双主题预览含错误点 |
@@ -52,7 +52,7 @@
 ### 未验证 / 边界
 
 - 新导航已有最终截图和真实 Chromium fixture 点击链路；未验真实 DSH WebView 的读屏/触摸/IME，本轮 UI 尚未获用户整版确认。
-- 双盲 B 的当前修复版未再做一次独立复评分；本主线以全量、隔离 preflight 和真实 Chromium 交互复验，未伪称 B 最终零发现。
+- 当前 task-20/21 两组双盲均已签收；证据范围是独立 HTTP、真实 Chromium fixture 与官方源码对照，不扩展为真实宿主长期运行通过。
 - 真实 DSH 宿主重载后的长期运行、读屏/触摸/IME；本轮不重启宿主。
 - 真实 Gitee 写操作仍未验；fake/本地归一化不能替代真实仓库回读。
 - 跨主机 NFS/SMB 锁语义、不经过本锁的外部写者、连续 24 小时运行未验。
