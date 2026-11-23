@@ -40,6 +40,7 @@
     "lib/state-migration.js",
     "lib/update.js",
     "lib/semver.js",
+    "lib/enabled.js",
     "cordis.patch.yml",
     "README.md",
     "AGENTS.md",

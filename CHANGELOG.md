@@ -6,6 +6,41 @@
 
 ### Fixed
 
+- **`pollHealth` 的五个交界问题**（PR #68 review 第二轮，每条都有独立最小复现）：
+
+  1. **启动豁免被 `createdAt < bootAt` 绕过**：`lastPoll=null` 时只要守建于进程启动前就立刻判 `boot-miss`，
+     哪怕进程才起来 60 秒。现在该分支也要求 `uptimeMs > staleMs`，否则给 `grace` ——
+     「刚重启还没轮到」和「bootstrap 真的失败」是两件事。
+  2. **会话宽限期不算正常等待**：PR 守写 `deferReason: 'session-missing'`，但 `pollHealth` 只认
+     activeHours / backoff / cap，于是「会话缺失 1 分钟、退避正常」仍被判 `stalled`、面板照旧显示「轮询停了」。
+     现在 `session-missing` 归 `waiting`；issue 守那一侧也补上了 `deferReason`（以前只有 PR 守写，两处不对称）。
+  3. **按仓库汇总仍是绿点**：`summarizeByRepo()` 只在 `lastError` 时加 `errors`，没计 `poll` ——
+     主行已经红了、底部汇总还是绿点。服务端与面板两份实现一起改。
+  4. **`watch_status` 对暂停别名仍投影 `enabled: true`**：`projectWatcher()` 写的是 `enabled !== false`，
+     于是 `statusView([{enabled:'off'}])` 返回 `enabled: true`，而同一个条目的 `pollHealth` 判 `paused`。
+     同一份公开 JSON 里两个结论打架。判据抽到 `lib/enabled.js` 的 `isWatcherEnabled()`，
+     调度器 / `pollHealth` / 投影房 / 面板 / `summarizeByRepo` / 「在跑的守」计数全部共用。
+  5. **只有停摆时「需要关注」是空的**：`hasProblem()` 认了 `poll`，但 `problems` 数组没加对应项 ——
+     筛选能选中它、顶部告警区却一条不显示（停摆时 `lastError` 本来就是 null，走不到那条分支）。
+     现在 `poll` 有独立告警项，rank 0（比任何 `lastError` 都该先看），文案按 `stalled` / `boot-miss` 分开。
+
+  6. **陈旧的 `deferReason` 会永久压掉真实停摆**（对抗性审计打穿的真实回归）：上面第 2 条最初写成
+     「`deferReason === 'session-missing'` 就无条件 `waiting`」，于是一个真实事故形态被重新藏起来 ——
+     会话休眠时写下 `session-missing`，宿主重启后启动挂载又没跑起来，面板绿灯、doctor 同一份数据
+     却报「重启后还没轮询过」。`cap-*` 同病。现在：① `beforeBoot && uptimeMs > staleMs`（重启后
+     一次都没成功轮询）优先于任何运行时理由，直接 `boot-miss`；② `cap-*` / `session-missing` 只有
+     在 `lastPoll` 新鲜（`ageMs <= staleMs`）时才算等待 —— 它们与 `lastPoll` 本来就是同一轮成对落盘，
+     陈旧组合只可能是停摆后的残留；③ `session-missing` 另需 10 分钟宽限期真的没过。
+     `activeHours` 与 `nextAt` 不受此限：前者是配置、后者是绝对时间戳，本来就能独立解释停摆。
+  7. **issue 守的宽限期与 PR 守不对称**：补 `lastError = null` / `consecutiveFailures = 0` / `noteEvent`，
+     否则上一轮的故障痕迹会让「会话尚未就绪」这个正常状态仍亮红。
+
+  用例 15 条，全部做过变异验证（删 problems 里的 poll 项 / 汇总不看 poll / 暂停别名退回 `=== false` /
+  汇总圆点恒 `done` / 主行 `poll` 判成 `active` / `hasProblem` 删掉 poll / poll 告警 rank 0→99 /
+  面板「启用 N」回退 / `countPausable` 回退 / 去掉 `uptimeMs > staleMs` / 不认 `session-missing` /
+  `session-missing` 不校验新鲜度 / 删 `beforeBoot` 提前判定 / 投影退回 `enabled !== false`）——
+  14 种变异分别红在对应断言上，还原后全绿。
+
 - **PR 守把「会话暂时不在宿主里」直接当成故障**（2026-11-23 真机：`pr:MYCF711/dsh-session-superagent` 那条主理鱼所在会话只是**休眠**，面板里还在、标题正常，但宿主重启后 `agents.get()` 拿不到它）。issue 守有 `sessionMissingVerdict` 的 10 分钟宽限期，**PR 守没有**：它把 wake 的 reason 直接写成 `lastError` 并 `bumpFailure`，面板立刻显示红色「异常」+「退避 459s」，用户以为守坏了、不敢继续监控。现在 PR 守与 issue 守共用同一套判据：宽限期内记为「会话尚未就绪（宿主可能刚启动）」并**不累计失败**，超过宽限期才升级成「会话已不在」。两句共用 `sessionMissingDeferText()`，不再复制粘贴。用例：PR 守首轮宽限（`lastError` 必须为 null、`nextAt` 必须为 null、必须记下 `sessionMissingSince`）+ 反向用例（超过宽限期必须真的报错并进退避）。
 - **宿主重启后，所有守一次都不再轮询**（2026-11-22 真机：11-21 23:11 重启，之后 24 小时零轮询，`lastError` 仍是 null，面板照旧「运行中 · 正常」，期间新建的 PR 全部漏掉）。根因在 `apply()` 的启动挂载段：`for (const entry of …) startWatcher(state.watchers[id])` —— 循环变量叫 `entry`，`id` 在该作用域根本不存在，于是每轮都 `startWatcher(undefined)`，在 `timers.has(entry.id)` 处抛 `TypeError`，被外层空 `catch {}` 吞掉，**一条守也挂不上且没有任何报错**。现在改用 `entry` 本身，并让单条守的挂载失败不连累其余守（失败原因写进该条的 `lastError`）。用例：预置含 enabled/paused 的 `watchers.json`，重新 `import` 并 `apply()` 后断言 enabled 的有 interval 定时器、paused 的没有。
 - **「重启后一次都没轮询」此前不可观测**。新增 `pollHealth()` 纯函数（`lib/watch.js`）作为面板 / `/state` / `watch_doctor` 的单一判据：`boot-miss`（`lastPoll` 早于本进程诞生且已过豁免期）、`stalled`（跑着跑着丢了）、`grace`（刚重启还没轮到）、`ok` / `never` / `paused`。doctor 现在会明确说「重启后还没轮询过 —— 启动挂载可能失败」，而不是误报成「定时器可能丢了」；判据以**真实进程诞生时刻**为准 —— 盘上的 `server.startedAt` 在启动挂载失败时根本不刷新（现场差了 24 小时），读它会把故障当成「刚重启」。

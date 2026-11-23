@@ -3588,8 +3588,12 @@ test('pollHealth：正常等待（活跃时段外 / 退避中 / 上限）不算�
   // 这三种情况下 lastPoll 本来就不会动，以前会同时报「轮询停了」和「时段外/退避中」
   assert.deepEqual(pollHealth({ ...base, activeHours: '09:00-10:00' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'active-hours' })
   assert.deepEqual(pollHealth({ ...base, nextAt: new Date(now + 60_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'backoff' })
-  assert.deepEqual(pollHealth({ ...base, deferReason: 'cap-watcher' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'cap' })
-  assert.deepEqual(pollHealth({ ...base, deferReason: 'cap-session' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'cap' })
+  // `cap-*` 是运行时状态，与 lastPoll 同一轮成对落盘 —— 只有 lastPoll 新鲜时才成立。
+  const freshCap = { ...base, lastPoll: new Date(now - 10_000).toISOString() }
+  assert.deepEqual(pollHealth({ ...freshCap, deferReason: 'cap-watcher' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'cap' })
+  assert.deepEqual(pollHealth({ ...freshCap, deferReason: 'cap-session' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'waiting', reason: 'cap' })
+  // 陈旧的 cap：只可能是停摆后的残留（见下面「陈旧 busy/observe」那条用例的论证）
+  assert.deepEqual(pollHealth({ ...base, deferReason: 'cap-watcher' }, { now, bootAt: now - 24 * 3600_000 }), { state: 'stalled' })
   // 对照：没有这些理由、同样一小时没轮询 → 真停摆
   assert.deepEqual(pollHealth(base, { now, bootAt: now - 24 * 3600_000 }), { state: 'stalled' })
 })
@@ -3614,4 +3618,93 @@ test('pollHealth：老的 enabled 守从没轮询过要给 boot-miss，不是永
   assert.equal(pollHealth({ intervalSec: 60, enabled: true, lastPoll: null, createdAt: new Date(now - 10 * 3600_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }).state, 'boot-miss')
   // 守是本次启动之后才建的（哪怕时间很短）→ 仍在豁免期
   assert.equal(pollHealth({ intervalSec: 60, enabled: true, lastPoll: null, createdAt: new Date(now - 10_000).toISOString() }, { now, bootAt: now - 10 * 60_000 }).state, 'never')
+})
+
+test('pollHealth：老守 + 刚重启的进程要给 grace，不能立刻报 boot-miss（review 第 1 条）', () => {
+  const now = Date.parse('2026-11-23T12:00:00Z')
+  // reviewer 的最小复现：createdAt=24 小时前、bootAt=60 秒前、lastPoll=null。
+  // 旧实现只要 `createdAt < bootAt` 就直接 boot-miss —— 进程才起来 60 秒，
+  // 甚至还没跑完第一轮，这与「启动豁免期」自相矛盾。
+  const ancient = { intervalSec: 300, enabled: true, lastPoll: null, createdAt: new Date(now - 24 * 3600_000).toISOString() }
+  assert.deepEqual(pollHealth(ancient, { now, bootAt: now - 60_000 }), { state: 'grace' }, '刚启动 60 秒的进程必须给豁免期')
+  // 进程也跑过停滞阈值了 → 才轮到 boot-miss（一次都没轮询确实是 bootstrap 失败）
+  assert.deepEqual(pollHealth(ancient, { now, bootAt: now - 24 * 3600_000 }), { state: 'boot-miss' })
+  // 边界：刚过/刚不到停滞阈值（intervalSec=300 → staleMs=max(900s,300s)=900s）
+  assert.deepEqual(pollHealth(ancient, { now, bootAt: now - 899_000 }), { state: 'grace' }, '还没到阈值 → grace')
+  assert.deepEqual(pollHealth(ancient, { now, bootAt: now - 901_000 }), { state: 'boot-miss' }, '过了阈值 → boot-miss')
+})
+
+test('pollHealth：session-missing 宽限期算正常等待，不是停摆（review 第 2 条）', () => {
+  const now = Date.parse('2026-11-23T12:00:00Z')
+  // reviewer 的最小复现：会话缺失仅 1 分钟、退避正常，旧实现返回 stalled。
+  // `pollPrOnce` 在宽限期内写 `deferReason: 'session-missing'`，pollHealth 必须认它。
+  // `lastPoll` 必须是**新鲜的**：deferReason 与 lastPoll 同一轮成对落盘，
+  // 活着的守在宽限期内写 session-missing 时 lastPoll 必然是刚更新的。
+  const live = { intervalSec: 60, enabled: true, kind: 'pr', lastPoll: new Date(now - 10_000).toISOString() }
+  assert.deepEqual(
+    pollHealth({ ...live, deferReason: 'session-missing', sessionMissingSince: new Date(now - 60_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }),
+    { state: 'waiting', reason: 'session-missing' },
+  )
+  // 对照 1：lastPoll 陈旧（2 小时）→ 这个 session-missing 只可能是停摆后的残留 → stalled
+  const stale = { ...live, lastPoll: new Date(now - 2 * 3600_000).toISOString() }
+  assert.deepEqual(
+    pollHealth({ ...stale, deferReason: 'session-missing', sessionMissingSince: new Date(now - 60_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }),
+    { state: 'stalled' },
+    'lastPoll 陈旧 + session-missing → 不能算等待（否则停摆被永久掩盖）',
+  )
+  // 对照 2：宽限期已过（3 天）+ lastPoll 陈旧 → 不是等待，判停摆
+  assert.equal(
+    pollHealth({ ...stale, deferReason: 'session-missing', sessionMissingSince: new Date(now - 3 * 24 * 3600_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }).state,
+    'stalled',
+  )
+  // 对照 3：宽限期已过但 lastPoll 新鲜 → 轮询本身是好的（会话真没了该由 lastError 表达），
+  // 不该报「轮询停了」
+  assert.equal(
+    pollHealth({ ...live, deferReason: 'session-missing', sessionMissingSince: new Date(now - 3 * 24 * 3600_000).toISOString() }, { now, bootAt: now - 24 * 3600_000 }).state,
+    'ok',
+  )
+})
+
+test('statusView 的 enabled 也要走统一判据，不能与 pollHealth 互相矛盾（review 第 4 条）', () => {
+  const now = Date.parse('2026-11-23T12:00:00Z')
+  const entry = (enabled) => ({
+    id: 'o/r#s1', repo: 'o/r', sessionId: 's1', enabled, intervalSec: 60,
+    lastPoll: new Date(now - 2 * 3600_000).toISOString(), filters: {},
+  })
+  // reviewer 的最小复现：`statusView([{enabled:'off'}])` 返回 `enabled: true`，
+  // 而同一个条目的 `pollHealth` 判 paused —— 同一份公开 JSON 里两个结论打架。
+  for (const alias of [false, 0, 'false', 'off', 'no', ' off ']) {
+    const view = statusView([entry(alias)], { now })
+    assert.equal(view.watchers[0].enabled, false, 'enabled=' + JSON.stringify(alias) + ' 的 enabled 必须投影成 false')
+    assert.equal(pollHealth(entry(alias), { now }).state, 'paused', '同一条必须同时判 paused（口径要一致）')
+    assert.equal(isWatcherEnabled(entry(alias)), false)
+  }
+  // 反向：启用中的守两个字段都必须说「在跑」
+  const live = statusView([entry(true)], { now })
+  assert.equal(live.watchers[0].enabled, true)
+  assert.notEqual(pollHealth(entry(true), { now }).state, 'paused')
+})
+
+test('pollHealth：陈旧的 busy/observe 不能掩盖真实停摆（否则「停了」会永久显示「会话正忙」）', () => {
+  const now = Date.parse('2026-11-23T12:00:00Z')
+  const bootAt = now - 24 * 3600_000
+  // 为什么这几个不算「正常等待」：它们都是 `poll` 跑完之后才写的 deferReason，
+  // 而写之前 `entry.lastPoll` 已经更新过（pollPrOnce 的 `entry.lastPoll = now()` 在
+  // 列表成功之后、`deferReason='busy'` 在唤醒阶段之前）。所以「busy + lastPoll 3 小时前」
+  // 在真实时序里不可能是新数据，只可能是进程停摆后留在盘上的陈旧值。
+  const stale = { intervalSec: 60, enabled: true, lastPoll: new Date(now - 3 * 3600_000).toISOString() }
+  for (const reason of ['busy', 'observe', 'unchanged', 'timeout', 'ratelimit']) {
+    assert.equal(pollHealth({ ...stale, deferReason: reason }, { now, bootAt }).state, 'stalled',
+      'deferReason=' + reason + ' 且 lastPoll 很旧 → 必须仍判停摆，不能被陈旧理由掩盖')
+  }
+  // ⚠️ `session-missing` 与 `cap-*` 同样是本轮写的运行时状态，**陈旧的也不能认**
+  //（对抗性审计打穿点：旧实现无条件 return waiting，「会话休眠时写下 session-missing、
+  //  宿主重启后启动挂载没跑起来」会被永久显示成等待中，而 doctor 同一份数据说
+  //  「重启后还没轮询过」—— 面板与 doctor 结论相反）。
+  assert.equal(pollHealth({ ...stale, deferReason: 'session-missing' }, { now, bootAt }).state, 'stalled')
+  assert.equal(pollHealth({ ...stale, deferReason: 'cap-watcher' }, { now, bootAt }).state, 'stalled')
+  assert.equal(pollHealth({ ...stale, deferReason: 'cap-session' }, { now, bootAt }).state, 'stalled')
+  // 对照：真正能解释「lastPoll 没动」的两种，必须判 waiting
+  assert.equal(pollHealth({ ...stale, nextAt: new Date(now + 60_000).toISOString() }, { now, bootAt }).state, 'waiting')
+  assert.equal(pollHealth({ ...stale, activeHours: '09:00-10:00' }, { now, bootAt }).state, 'waiting')
 })

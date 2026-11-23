@@ -15,10 +15,13 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // 这个文件在 bin/ 里，包根是上一层
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+// 「启用」判据只该有一处 —— 从包里 import 同一个实现。
+// 注意它也是 NEEDED 里的一项：缺了这个文件 import 直接失败，正是要拦的那种事故。
+const { isWatcherEnabled } = await import(pathToFileURL(join(ROOT, 'lib', 'enabled.js')).href)
 const args = process.argv.slice(2)
 const portArg = args.includes('--port') ? args[args.indexOf('--port') + 1] : null
 
@@ -29,7 +32,8 @@ const warn = (text) => lines.push('警告 ' + text)
 const fail = (text) => { lines.push('FAIL ' + text); bad += 1 }
 
 // ① 包本身完整吗（这几份缺一份，插件就挂不上）
-const NEEDED = ['package.json', 'client.js', 'lib/index.js', 'lib/watch.js', 'cordis.patch.yml']
+// lib/enabled.js 是 lib/watch.js 的直接 import，缺了就是整段模块加载失败（AGENTS 里 lib/body.js 的历史事故形状）
+const NEEDED = ['package.json', 'client.js', 'lib/index.js', 'lib/watch.js', 'lib/enabled.js', 'cordis.patch.yml']
 const missing = NEEDED.filter((rel) => !existsSync(join(ROOT, rel)))
 if (missing.length > 0) fail('安装副本缺文件：' + missing.join('、') + '（重装一次）')
 else ok('安装副本完整（' + NEEDED.length + ' 个必需文件都在）')
@@ -55,7 +59,8 @@ if (!existsSync(stateDir)) {
     try {
       const state = JSON.parse(readFileSync(watchers, 'utf8'))
       const count = Object.keys(state.watchers || {}).length
-      const enabled = Object.values(state.watchers || {}).filter((w) => w && w.enabled !== false).length
+      // 判据走全仓唯一实现（`enabled: 0 / "no" / "off"` 也算暂停）
+      const enabled = Object.values(state.watchers || {}).filter((w) => isWatcherEnabled(w)).length
       ok('已配置 ' + count + ' 条主理鱼（其中 ' + enabled + ' 条在跑）')
     } catch {
       fail('watchers.json 不是合法 JSON —— 面板会读不出来；先备份它再删掉重配')

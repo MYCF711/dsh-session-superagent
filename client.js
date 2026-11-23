@@ -17,6 +17,21 @@ window.__ModuleLoader__.load({
     // 人话在客户端翻译：弹层摘要与状态行共用同一张表，不会说成两套话。
     const POLL_STALE_TEXT = { 'boot-miss': '重启后没跑起来', stalled: '轮询停了' }
 
+    // 服务端权威判据是 `lib/enabled.js` 的 `isWatcherEnabled()`。
+    // client.js 是 UMD（只能走 factory 注入的 require，不能 import 相对 ESM），所以这里
+    // 必须镜像一份 —— 但**只准有这一份**：以前这个判断散在 6 处，写法各不相同
+    //（`w.enabled ?` / `=== false` / `!== false`），于是 `enabled: 'off'` 的守
+    // 面板把它当启用（显示「暂停」按钮，点了才真暂停），而调度器早就当它暂停了 ——
+    // 用户根本点不到「恢复」。改这份时**必须同步 lib/enabled.js**。
+    function isEnabledFlag(value) {
+      if (value === undefined || value === null) return true
+      if (value === false || value === 0) return false
+      const text = String(value).trim().toLowerCase()
+      return !(text === 'false' || text === '0' || text === 'no' || text === 'off')
+    }
+    /** 一条 watcher 是否启用（口径同服务端） */
+    const watcherEnabled = (w) => isEnabledFlag(w && w.enabled)
+
     // Issue #35：本地回退 Modal 的 portal 通道。composer dock 的祖先可能带 transform / contain，
     // 那会让 position:fixed 以该祖先为包含块并被 overflow 裁掉 —— 确认层 footer 既看不见也点不到。
     // 宿主 react-dom 走 factory require；拿不到时保持内联渲染，不另造第三套 Modal。
@@ -1833,10 +1848,9 @@ window.__ModuleLoader__.load({
       if (w.poll) return 'error'
       // 历史数据里可能残留「gh: HTTP 304」这类不是错误的记录 —— 不把它当异常
       if (w.lastError && !/HTTP 304|304 Not Modified/i.test(String(w.lastError))) return 'error'
-      // 暂停判据与服务端同一口径：`enabled: 0 / "no" / "off"` 也算暂停，
+      // 暂停判据与服务端同一口径（`watcherEnabled`）：`enabled: 0 / "no" / "off"` 也算暂停，
       // 否则调度器不轮询、面板却写「主理中」（PR #68 review 第 4 条）。
-      if (w.enabled === false || w.enabled === 0) return 'paused'
-      if (typeof w.enabled === 'string' && /^(false|0|no|off)$/i.test(w.enabled.trim())) return 'paused'
+      if (!watcherEnabled(w)) return 'paused'
       // 设了活跃时段、而此刻在窗口外：它其实不会唤醒，只是把条目攒着 ——
       // 这时候还标「主理中」就是在骗人（2026-11-02 用户截图指出）。
       if (w.activeHours && inWindowNow(w.activeHours) === false) return 'dormant'
@@ -2253,7 +2267,7 @@ window.__ModuleLoader__.load({
         const statusDot = h('span', { className: 'dt-state-dot', 'data-state': dotState })
         const statusTag = h('span', { className: 'dt-tag', 'data-tone': tone }, STATE_TEXT[state])
         const pollPending = actionPending(w, 'poll')
-        const toggleAction = w.enabled ? 'pause' : 'resume'
+        const toggleAction = watcherEnabled(w) ? 'pause' : 'resume'
         const togglePending = actionPending(w, toggleAction)
         const detailContent = h(React.Fragment, null,
           h('div', { className: 'sa-dock-sub' }, shortSub(w)),
@@ -2274,7 +2288,7 @@ window.__ModuleLoader__.load({
             size: 'sm', variant: 'ghost', disabled: togglePending,
             className: cx(togglePending && 'dt-btn-busy'), 'aria-busy': togglePending ? 'true' : undefined,
             onClick: () => act(w, toggleAction),
-          }, togglePending ? (toggleAction === 'pause' ? '暂停中…' : '恢复中…') : (w.enabled ? '暂停' : '恢复')),
+          }, togglePending ? (toggleAction === 'pause' ? '暂停中…' : '恢复中…') : (watcherEnabled(w) ? '暂停' : '恢复')),
           hostOrbit
             ? h(Btn, {
               variant: 'ghost', size: 'sm', icon: h(Icon, { name: 'trash' }),
@@ -3655,8 +3669,8 @@ window.__ModuleLoader__.load({
       // 让按钮对**看见的那些**生效（与它的文案同口径）。
       const actBulk = (action, list = watchers) => run(async () => {
         for (const watcher of list) {
-          if (action === 'pause' && !watcher.enabled) continue
-          if (action === 'resume' && watcher.enabled) continue
+          if (action === 'pause' && !watcherEnabled(watcher)) continue
+          if (action === 'resume' && watcherEnabled(watcher)) continue
           await call('/watch', { method: 'POST', body: JSON.stringify({ action, id: watcherId(watcher) }) })
         }
       }, action === 'pause' ? '全部已暂停' : '全部已恢复')
@@ -3784,7 +3798,7 @@ window.__ModuleLoader__.load({
       // 可暂停的守 = 还在 enabled 的那些。actBulk('pause') 正是按这个条件跳过的，
       // 按钮的可用状态必须跟它同口径 —— 不同口径就会出现「可点、但一条都没动」。
       // 可暂停 = **当前这一屏**里还在轮询的（与 actBulk 的入参同口径）
-      const countPausable = (list) => list.filter((w) => w.enabled).length
+      const countPausable = (list) => list.filter(watcherEnabled).length
 
       const stateTag = (watcher) => {
         const state = orbitStateOf(watcher)
@@ -3803,7 +3817,7 @@ window.__ModuleLoader__.load({
         const reason = raw
           // 只降全角冒号：时钟 09:00 的冒号是半角，动了就成了「09—— 00」
           ? raw.replace(/（([^）]*?)\s*之外）/, '（$1）').replace(/：/g, '—— ')
-          : (watcher.enabled === false ? '已手动停用 —— 不会轮询，也不会唤醒；点「恢复」继续' : '')
+          : (!watcherEnabled(watcher) ? '已手动停用 —— 不会轮询，也不会唤醒；点「恢复」继续' : '')
         if (!reason) return null
         return h('div', { className: 'dt-ticket-note dt-ticket-note-pause' }, '暂停唤醒：' + reason)
       }
@@ -3907,10 +3921,10 @@ window.__ModuleLoader__.load({
             h(Btn, { size: 'sm', variant: 'outline', icon: h(Icon, { name: 'refresh' }), onClick: () => act(watcher, 'poll') }, '立刻'),
             h(Btn, {
               size: 'sm', variant: 'ghost',
-              icon: h(Icon, { name: watcher.enabled ? 'pause' : 'play' }),
-              label: watcher.enabled ? '暂停' : '恢复',
-              onClick: () => act(watcher, watcher.enabled ? 'pause' : 'resume'),
-            }, watcher.enabled ? '暂停' : '恢复'),
+              icon: h(Icon, { name: watcherEnabled(watcher) ? 'pause' : 'play' }),
+              label: watcherEnabled(watcher) ? '暂停' : '恢复',
+              onClick: () => act(watcher, watcherEnabled(watcher) ? 'pause' : 'resume'),
+            }, watcherEnabled(watcher) ? '暂停' : '恢复'),
             h(ConfirmButton, {
               size: 'sm', variant: 'ghost', icon: h(Icon, { name: 'trash' }), label: '删除',
               confirmLabel: '确认删除', onConfirm: () => act(watcher, 'delete'),
@@ -3996,6 +4010,25 @@ window.__ModuleLoader__.load({
             // `wake:` 前缀由 lib/watch.js 的 planWakeSettlement 打上。
             text: watcher.repo + (isWakeFailure(watcher.lastError) ? ' 唤醒失败：' : ' 轮询失败：')
               + parts.main.replace(/^wake:\s*/, '').slice(0, 120) + (parts.main.length > 120 ? '…' : '') + ' ' + parts.hint,
+          })
+        }
+        // 轮询停摆：**独立一条**，不能只靠 lastError 那条。
+        // 停摆时 lastError 往往是 null（压根没发起请求，所以不会报错），
+        // 于是「只看有问题」能选中这条守，顶部「需要关注」却一条都不显示（PR #68 review 第 5 条）。
+        // rank 0：它比任何 lastError 都该先看 —— 守根本没在工作，后面的报错都是过期的。
+        if (watcher.poll) {
+          // key 必须带 kind + sessionId：同一个仓库同时可以有 issue 守和 PR 守（`pr:` 前缀本来
+          // 就是为此存在的），也可以被多个会话各守一条。只按 repo 去重会把它们合成一条，
+          // 而且留下的是先 push 的那条 —— 可能把「重启后没跑起来」吞成「轮询停了」。
+          problems.push({
+            key: ['p', watcher.kind === 'pr' ? 'pr' : 'issue', watcher.repo, watcher.sessionId].map((part) => String(part ?? '')).join('|'),
+            rank: 0, kind: 'poll',
+            // 文案带类型与会话，否则两条同 repo 的守字面一样、客户分不清是哪条停了。
+            text: watcher.repo
+              + (watcher.kind === 'pr' ? '（PR 守' : '（issue 守')
+              + (watcher.sessionId ? ' · ' + sessionTag(watcher.sessionId) : '')
+              + '）' + (POLL_STALE_TEXT[watcher.poll] || '轮询停了')
+              + '：它已经不再产生新的唤醒，所以面板上的「最近轮询」不会再变。先确认宿主还活着，再点行里的「立刻」试一轮。',
           })
         }
         // 暂停原因不在「需要关注」里重复：卡片里已经有一行加粗警告色的「暂停唤醒：…」（见 pauseNote），
@@ -4719,10 +4752,12 @@ window.__ModuleLoader__.load({
           const repo = String(watcher.repo)
           const group = groups.get(repo) || { repo, count: 0, lastWake: null, silentWakes: 0, errors: 0, enabled: 0, badges: [] }
           group.count += 1
-          if (watcher.enabled !== false) group.enabled += 1
+          if (watcherEnabled(watcher)) group.enabled += 1
           if (watcher.lastWake && (!group.lastWake || String(watcher.lastWake) > String(group.lastWake))) group.lastWake = watcher.lastWake
           group.silentWakes = Math.max(group.silentWakes, Number(watcher.silentWakes) || 0)
-          if (watcher.lastError) group.errors += 1
+          // `poll`（轮询停了 / 重启后没跑起来）必须计进 errors：它出现时 lastError 往往是 null，
+          // 以前主行已经标成异常、底部「按仓库」却还是绿点（PR #68 review 第 3 条）。
+          if (watcher.poll || watcher.lastError) group.errors += 1
           for (const badge of repoBadges(watcher.repoAccess) || []) {
             if (!group.badges.some((b) => b.text === badge.text)) group.badges.push(badge)
           }
