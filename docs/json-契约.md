@@ -2,7 +2,7 @@
 
 所有工具都支持 `format: 'json'`，返回带 `schemaVersion` 的对象（当前 `1`）。
 
-**稳定性**：`稳定` = 不会无故改名或删除；`实验` = 可能变化，请容忍缺失。
+**稳定性**：`稳定` = 不会无故改名或删除；`实验` = 可能变化，请容忍缺失；`可选` = 只在特定状态出现，出现时名称固定。
 
 ## watch_status
 
@@ -56,6 +56,7 @@
 | `silentWakes` | 稳定 |
 | `cursor` | 实验 |
 | `lastPoll` | 稳定 |
+| `poll` | 可选 |
 | `lastWake` | 稳定 |
 | `lastError` | 稳定 |
 | `lastErrorKind` | 稳定 |

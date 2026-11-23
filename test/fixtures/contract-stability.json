@@ -1,5 +1,5 @@
 {
-  "_comment": "JSON 输出字段的稳定性清单。stable = 不会无故改名/删除；experimental = 可能变。新增字段必须在这里登记，否则用例会红。",
+  "_comment": "JSON 输出字段的稳定性清单。stable = 不会无故改名/删除；experimental = 可能变；optional = 只在特定状态出现，出现时名称固定。新增字段必须在这里登记，否则用例会红。",
   "watch_status": {
     "root": {
       "schemaVersion": "stable",
@@ -42,6 +42,7 @@
       "silentWakes": "stable",
       "cursor": "experimental",
       "lastPoll": "stable",
+      "poll": "optional",
       "lastWake": "stable",
       "lastError": "stable",
       "lastErrorKind": "stable"

@@ -13,6 +13,9 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState } = React
 
+    // 服务端只传状态名；人话统一在客户端翻译，弹层与主面板共用。
+    const POLL_STALE_TEXT = { 'boot-miss': '重启后没跑起来', stalled: '轮询停了' }
+
     // Issue #35：本地回退 Modal 的 portal 通道。composer dock 的祖先可能带 transform / contain，
     // 那会让 position:fixed 以该祖先为包含块并被 overflow 裁掉 —— 确认层 footer 既看不见也点不到。
     // 宿主 react-dom 走 factory require；拿不到时保持内联渲染，不另造第三套 Modal。
@@ -2203,6 +2206,7 @@ window.__ModuleLoader__.load({
       if (!w) return 'paused'
       // 历史数据里可能残留「gh: HTTP 304」这类不是错误的记录 —— 不把它当异常
       if (w.lastError && !/HTTP 304|304 Not Modified/i.test(String(w.lastError))) return 'error'
+      if (w.poll && POLL_STALE_TEXT[w.poll]) return 'error'
       if (w.enabled === false) return 'paused'
       // 设了活跃时段、而此刻在窗口外：它其实不会唤醒，只是把条目攒着 ——
       // 这时候还标「主理中」就是在骗人（2026-11-02 用户截图指出）。
@@ -2576,6 +2580,7 @@ window.__ModuleLoader__.load({
         const parts = [whoName(w) + whoId(w), '每 ' + (Number(w.intervalSec) || 60) + 's']
         // ageText 自己已经带「前」（「76 秒前」），别再拼一个 —— 真机上显示成「76 秒前前」
         if (w.lastPoll) parts.push(ageText(w.lastPoll))
+        if (w.poll && POLL_STALE_TEXT[w.poll]) parts.push(POLL_STALE_TEXT[w.poll])
         if (w.activeHours) parts.push('时段 ' + w.activeHours)
         return parts.join(' · ')
       }
@@ -4217,7 +4222,10 @@ window.__ModuleLoader__.load({
             // ack 标签决定这条是否还会被叫醒，不能只在工具参数里出现。
             h(Tag, { tone: 'quiet' }, '回执 ' + (watcher.ackLabel || ackLabelFallback(watcher, ACK_DEFAULTS))),
             watcher.queuedWakes > 0 ? h(Tag, { tone: 'warning' }, '排队 ' + watcher.queuedWakes) : null,
-            backoffText(watcher) ? h(Tag, { tone: 'warning' }, backoffText(watcher)) : null),
+            backoffText(watcher) ? h(Tag, { tone: 'warning' }, backoffText(watcher)) : null,
+            (watcher.poll && POLL_STALE_TEXT[watcher.poll])
+              ? h(Tag, { tone: 'warning' }, POLL_STALE_TEXT[watcher.poll])
+              : null),
           // 三行，各管一件事：① 是谁 ② 节律与最近结果 ③ 目标
           // 原来六段用 ' · ' 串成一行（会话 · 每 60s · 轮询 · 唤醒 · 上次唤醒 · 目标），
           // 出图时那行在浅色主题下折成两行、读起来像一堵墙。
@@ -4388,6 +4396,7 @@ window.__ModuleLoader__.load({
       const matchesBadge = (watcher) => !badgeFilter
         || repoBadges(watcher.repoAccess).some((badge) => badge.text === badgeFilter)
       const hasProblem = (watcher) => Boolean(watcher.lastError)
+        || Boolean(watcher.poll && POLL_STALE_TEXT[watcher.poll])
         || Boolean(watcher.lastReopened)
         || Number(watcher.silentWakes) >= 2
         || Boolean(repoStructureNote(watcher.repoAccess))
@@ -5091,7 +5100,7 @@ window.__ModuleLoader__.load({
           if (watcher.enabled !== false) group.enabled += 1
           if (watcher.lastWake && (!group.lastWake || String(watcher.lastWake) > String(group.lastWake))) group.lastWake = watcher.lastWake
           group.silentWakes = Math.max(group.silentWakes, Number(watcher.silentWakes) || 0)
-          if (watcher.lastError) group.errors += 1
+          if (watcher.lastError || (watcher.poll && POLL_STALE_TEXT[watcher.poll])) group.errors += 1
           for (const badge of repoBadges(watcher.repoAccess) || []) {
             if (!group.badges.some((b) => b.text === badge.text)) group.badges.push(badge)
           }

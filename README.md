@@ -172,7 +172,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-已通过 1389 项单测、20 房边界、11 项 UI 静态审计（1.1.0 实验仓候选）。44 项隔离 preflight 全过（41 PASS + 3 SKIP）、npm dry-run 打包与另起实例通过。两组双盲 Debug 已执行，B 发现的旧版高项已修复并经真实 Chromium 复测；双主题与 700px 预览已出图，UI 已确认；仅允许独立实验仓分支，不推主仓库。
+已通过 1401 项单测、20 房边界、11 项 UI 静态审计（1.1.0 实验仓候选）。44 项隔离 preflight 全过（41 PASS + 3 SKIP）、npm dry-run 打包与另起实例通过。两组双盲 Debug 已执行，B 发现的旧版高项已修复并经真实 Chromium 复测；双主题与 700px 预览已出图，UI 已确认。新增无 `webServer` 的 headless 实例：真实 `watch_start`、重新 import/apply、interval 恢复和单守错误落盘均通过；仅允许独立实验仓分支，不推主仓库。
 
 ### 贡献归属门禁
 

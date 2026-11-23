@@ -518,7 +518,8 @@ test('/state 字段契约：client.js 引用的每个字段都必须真的回传
   assert.deepEqual(missingTop, [], '顶层缺字段：' + missingTop.join(', '))
   assert.ok(state.gh !== undefined, 'gh 必须回传')
 
-  const missingPer = [...perWatcher].filter((key) => !(key in watcher))
+  const OPTIONAL_PER_WATCHER = new Set(['poll'])
+  const missingPer = [...perWatcher].filter((key) => !OPTIONAL_PER_WATCHER.has(key) && !(key in watcher))
   assert.deepEqual(missingPer, [], '每条缺字段：' + missingPer.join(', '))
 
   await call('POST', '/session-superagent/watch', { action: 'delete', id: created.id })
@@ -860,11 +861,15 @@ test('watch_doctor 能发现"定时器丢了"和"隔离目录不可写"', async 
   const key = Object.keys(state.watchers)[0]
   state.watchers[key].lastPoll = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
   // 进程也跑了很久（否则会被判成「刚重启」，见下一条用例）
-  state.server = { ...(state.server || {}), startedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() }
-  mod.__test.writeState(state)
-
-  const text = String(await doctor.execute({}))
-  assert.ok(/没轮询过/.test(text), '停滞的守要报出来：' + text.slice(0, 300))
+  const restoreBoot = mod.__test.setBootAt(Date.now() - 4 * 60 * 60 * 1000)
+  try {
+    state.server = { ...(state.server || {}), startedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() }
+    mod.__test.writeState(state)
+    const text = String(await doctor.execute({}))
+    assert.ok(/没轮询过/.test(text), '停滞的守要报出来：' + text.slice(0, 300))
+  } finally {
+    restoreBoot()
+  }
 })
 
 test('watch_trace 能说清"被冷却期吸收"，而不是三合一猜测', async () => {
@@ -1145,11 +1150,16 @@ test('刚重启不该被当成「定时器丢了」', async () => {
   assert.ok(!fresh.includes('定时器可能丢了'), '刚重启不该报故障')
 
   // 进程已经跑够久（uptime 3 小时）时，同样的陈旧就要报故障
-  const state2 = mod.__test.readState()
-  state2.server = { ...(state2.server || {}), startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString() }
-  mod.__test.writeState(state2)
-  const stale = String(await doctor.execute({}))
-  assert.ok(stale.includes('没轮询过'), '跑久了还陈旧才算故障：' + stale.slice(0, 300))
+  const restoreBoot = mod.__test.setBootAt(Date.now() - 3 * 3600 * 1000)
+  try {
+    const state2 = mod.__test.readState()
+    state2.server = { ...(state2.server || {}), startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString() }
+    mod.__test.writeState(state2)
+    const stale = String(await doctor.execute({}))
+    assert.ok(stale.includes('没轮询过'), '跑久了还陈旧才算故障：' + stale.slice(0, 300))
+  } finally {
+    restoreBoot()
+  }
 })
 
 test('watch_trace 文本：一切正常时一行说完，异常才展开', async () => {

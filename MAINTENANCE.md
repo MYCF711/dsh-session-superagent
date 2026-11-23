@@ -14,18 +14,18 @@
 | 形态 | DSH 插件：12 个工具 + 16 条路由 + 客户端面板与状态栏圆环 |
 | 目标宿主 | DeepSeek Harness `>=0.2.2-rc.1 <0.3.0-0`；Node ≥ 22.19；需已登录 `gh` CLI |
 
-## 二、当前状态（2026-11-22）
+## 二、当前状态（2026-11-23）
 
 ```text
 基线        上游 main@95b5a72（水位 v2 / 1.0.0）
-工作树      dsh-sa-modular-refactor；task/modular-rooms；已推独立实验仓，不推主仓库
+工作树      task-headless-polling（基于 b0b9d6a）；吸收上游 #68，待发实验仓 PR，不推主分支
 候选版本    1.1.0；20 个最小房间 + modular-runtime + modular-outbox-host
 默认行为    旧 watcher 仍 inline；只有显式 executionMode=worker 才创建独立 worker Session
 ```
 
 | 资产 / 验证 | 当前结果 |
 |---|---|
-| 全量单测 | **1389/1389，exit 0**；证据 `dsh-sa-artifacts/modular-full-test-v7.log` |
+| 全量单测 | **1401/1401，exit 0**；证据 `dsh-sa-artifacts/task-headless-full-test-final.log` |
 | 房间边界 | **20/20 PASS**；UI audit **11/11** |
 | Outbox | 同进程单飞、跨进程租约、热重载共享 flush、不同 Ticket 排队、attempts 栅栏均有回归 |
 | 生产接线 | worker/inline、bot/系统事件、ack 操作 ID、watcher 世代、marker 分页、执行模式切换已定向复验 |
@@ -33,6 +33,8 @@
 | 隔离 preflight / 打包 / 实例 | **44 项全过（41 PASS + 3 SKIP）**；`modular-preflight-final.log`。`npm pack --dry-run` 通过；另起实例 `1.1.0 / 12 tools / 16 routes / watermark=2`，见 `modular-instance.log` |
 | 双盲 Debug | task-13 A：**38/38，0 findings**；task-14 B：冻结旧版发现 High 4，当前已修停止确认、草稿恢复、详情/Session 导航与 worker 暂停；报告见 `blind-debug-a/REPORT.md`、`blind-debug-b/REPORT.md` |
 | UI | 官方 `8c32a9d` 选择性会话级复刻已完成；双主题/700px 图与真实 Chromium 交互通过；**UI 已获用户确认，只允许实验仓分支** |
+| headless | 无 `webServer` 实例 `watch_start`、重新 import/apply、interval 恢复通过；单守异常不连累好守，`lastError` 落盘有回归 |
+| 双盲修正 | 正常退避/时段外不误报；长期 never、enabled 兼容、optional 缺 stable、异常筛选/Orbit/按仓库错误点均有反向用例；双主题预览含错误点 |
 
 ### 本轮已修复的关键边界
 
@@ -46,7 +48,7 @@
 
 ### 未验证 / 边界
 
-- UI 已有最终截图、computed style 与真实点击链路；仍待用户确认，未验真实宿主读屏/触摸/IME，不冒充所有可访问性场景已通过。
+- UI 已有最终截图、computed style 与真实点击链路并已获用户确认；未验真实宿主读屏/触摸/IME，不冒充所有可访问性场景已通过。
 - 双盲 B 的当前修复版未再做一次独立复评分；本主线以全量、隔离 preflight 和真实 Chromium 交互复验，未伪称 B 最终零发现。
 - 真实 DSH 宿主重载后的长期运行、读屏/触摸/IME；本轮不重启宿主。
 - 真实 Gitee 写操作仍未验；fake/本地归一化不能替代真实仓库回读。
@@ -54,6 +56,6 @@
 
 ## 三、下一步
 
-1. UI 已确认；只允许独立实验仓 `task/modular-rooms`，禁止推主仓库。
-2. 远端分支已与本地提交核对；CI 仅 main push / PR 触发，本分支无 CI 运行，不伪报通过。后续若开 PR 再验 Node 22/24；不发布 tag / Release / npm。
+1. 将 headless 吸收改动提交到 `task-headless-polling`，只向独立实验仓 `task/modular-rooms` 开 PR，禁止推主分支。
+2. 核对 PR 的 Node 22/24 CI 与 headless 实例证据；不发布 tag / Release / npm。
 3. 有可写 Gitee 测试 issue/PR 后，补真实 ack + 写后重读并清理，再关闭该未验项。

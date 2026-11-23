@@ -301,6 +301,17 @@ const pausedSnapshot = {
   }),
 }
 
+const stalledSnapshot = {
+  loading: false, error: null,
+  body: baseBody({
+    sessionTitle: '无头联调会话',
+    credentials: { token: 'configured', sshKeyPath: 'none' },
+    watchers: [baseWatcher({
+      title: '无头联调会话', enabled: true, lastPoll: iso(2 * 3600000), poll: 'boot-miss',
+    })],
+  }),
+}
+
 // hook 槽顺序必须与 client.js 里 ZhuliPanel 的 useState 顺序完全一致：
 // snap, tab, notice, form, token, goalDraft, goalTouched, [], editing, draft, search,
 // glossary, update, checking, settingsSection
@@ -360,6 +371,7 @@ const scenarios = [
   { name: '空态（无守）', hooks: deskHooks({ snap: emptySnapshot }) },
   { name: '错误态（守失败）', hooks: deskHooks({ snap: errorSnapshot }) },
   { name: '暂停态（已停用）', hooks: deskHooks({ snap: pausedSnapshot }) },
+  { name: '轮询停摆（headless）', hooks: deskHooks({ snap: stalledSnapshot }) },
   { name: '读取失败', hooks: [{ loading: false, error: 'Failed to fetch', body: null }, 'overview', null, blankForm, '', '', false, [], null, {}, '', false, null, false, 'source', null, null] },
 ]
 

@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **headless / 宿主重启后守不再轮询**：吸收 @iJetLi 在上游 #68 的启动修复，`apply()` 改用当前 `entry` 挂载，单条守异常不再阻断其余守；无 `webServer` 的实例也能恢复 interval。补充 `pollHealth()` 与 `boot-miss/stalled/grace/ok/never/paused` 判据，`watch_doctor` 区分启动挂载失败和运行中停滞；`/state`、`watch_status` 和面板只在异常时输出可选 `poll` 字段，健康态不占轮询体积。
+- **双盲审查修正健康语义与 UI 一致性**：正常 `nextAt` 退避、`deferReason`、活跃时段外不误报停摆；`enabled` 与调度器共用判据；新守按 `createdAt` 豁免首轮，超龄无首轮才报 boot-miss；optional 校验继续拒绝缺 stable 和未知字段。停摆守进入异常/问题筛选、Orbit 错误态与按仓库错误点，不再一面报停、一面显示主理中。
+- **单守启动异常仍不可见**：在上游 #68 基础上补 `persistEntry(entry)`，挂载失败的 `lastError` 必须真实写盘并可由 `readState`/doctor 读回。新增 12 条测试，覆盖健康判据、正常等待、headless 启动挂载、doctor 启动漏报、单守异常隔离与错误落盘、optional 校验和 UI 状态；独立实例完成真实 `watch_start`、重新 import/apply 和 interval 恢复。
+
 ## [1.1.0] - 2026-11-22 —— 模块化房间与单用户执行（实验候选）
 
 ### Added —— 模块化房间（独立实验仓）
