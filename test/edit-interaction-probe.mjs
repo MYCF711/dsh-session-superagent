@@ -81,7 +81,7 @@ export function runHarnessProbe() {
     },
   }
   const client = loadClient()
-  const desk = client.registrations.find((entry) => entry.opts.id === 'session-superagent-desk')
+  const desk = client.registrations.find((entry) => entry.opts.name === 'main' && entry.opts.key === 'session-superagent')
   assert.ok(desk, '找不到主面板')
   const render = (queue) => {
     const raw = client.render(desk, queue, { sessionId: SESSION_ID })

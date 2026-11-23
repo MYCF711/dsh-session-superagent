@@ -96,8 +96,15 @@ function loadClient(options = {}) {
   }
 
   const registrations = []
+  const services = {
+    layout: { selectPanel() {} },
+    sidebarRight: { openTab() {} },
+    sidebarRightTabs: { register() { return () => {} } },
+    sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: { s1: { title: '当前项目会话' } } }) }, refresh: async () => {} },
+  }
   const ctx = {
     effect: (fn) => fn(),
+    get: (name) => services[name],
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) {
@@ -159,7 +166,7 @@ function mainQueue(snapshot, { tab = 'overview', update = null, item = null } = 
 }
 
 function deskOf(client) {
-  return client.registrations.find((item) => item.opts.id === 'session-superagent-desk')
+  return client.registrations.find((item) => item.opts.name === 'main' && item.opts.key === 'session-superagent')
 }
 
 function orbitOf(client) {
@@ -204,7 +211,9 @@ const anchor = { x: 720, y: 860 }
 test('可选探测：require 缺失或 exports 不全不阻断加载，主面板保留本地 Modal', () => {
   for (const primitives of [undefined, {}]) {
     const client = loadClient({ primitives })
-    assert.equal(client.registrations.length, 2)
+    assert.ok(deskOf(client), '必须注册 main#session-superagent')
+    assert.ok(orbitOf(client), '必须保留 composer dock')
+    assert.equal(client.registrations.some((item) => item.opts.name === 'conversation.view'), false, '旧中栏必须缺席')
     const base = mainQueue(stateWith())
     const nodes = walk(client.render(deskOf(client), [...base, true, false]))
     assert.equal(localModals(nodes).length, 1)

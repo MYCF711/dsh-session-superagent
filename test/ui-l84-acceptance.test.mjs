@@ -22,7 +22,7 @@ test('删除只开 Modal：取消不发请求，确认才发 delete', async () =
       return { ok: true, status: 200, text: async () => text }
     },
   })
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const base = deskQueue(snap)
   const closed = walk(render(desk, base))
   const trigger = closed.find((n) => n.type === 'button' && n.props['aria-label'] === '删除')
@@ -56,7 +56,7 @@ test('判定日志使用 DecisionLine：每天一组 ul.dt-list，每条 li.dt-t
     })],
   })
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const nodes = walk(render(desk, deskQueue(snap, null, {}, 'judge')))
   assert.ok(nodes.some((n) => n.type === 'ul' && n.props.className === 'dt-list'), '判定日志必须使用 ul.dt-list')
   assert.equal(nodes.filter((n) => n.type === 'li' && n.props.className === 'dt-row dt-link dt-ticket').length, 2)

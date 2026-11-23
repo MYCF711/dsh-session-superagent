@@ -160,7 +160,7 @@ function nodeText(node) {
 
 test('停摆守必须进入异常/问题筛选，不能继续只显示主理中', () => {
   const client = loadClient()
-  const desk = client.registrations.find((registration) => registration.opts.id === 'session-superagent-desk')
+  const desk = client.registrations.find((registration) => registration.opts.name === 'main' && registration.opts.key === 'session-superagent')
   const snap = { loading: false, error: null, body: { credentials: {}, watchers: [watcher('acme/stall', {
     id: 'acme/stall#s1', title: '无头守', enabled: true, poll: 'stalled', lastPoll: '2026-11-21T00:00:00Z',
   })] } }

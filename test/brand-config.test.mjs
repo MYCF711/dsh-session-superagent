@@ -248,7 +248,7 @@ test('轮询路径（pollWithItems）用品牌默认 ack 过滤，而不是旧�
 
 // ── client.js：三处 ack 回落改读 /state.defaultAckLabels ─────────────────
 
-const deskRegistration = (client) => client.registrations.find((r) => r.opts.id === 'session-superagent-desk')
+const deskRegistration = (client) => client.registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
 const orbitRegistration = (client) => client.registrations.find((r) => r.opts.id === 'session-superagent-orbit')
 const textOf = (nodes) => nodes.filter((n) => typeof n.text === 'string').map((n) => n.text).join(' | ')
 

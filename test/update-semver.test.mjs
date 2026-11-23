@@ -117,14 +117,15 @@ async function discoverWithVersions(versions) {
   const calls = []
   const fetch = async (url) => {
     calls.push(String(url))
-    if (String(url).endsWith('/state')) {
-      const base = String(url).slice(0, -'/state'.length)
+    const parsed = new URL(String(url), 'http://fixture.local')
+    if (parsed.pathname.endsWith('/state')) {
+      const base = parsed.pathname.slice(0, -'/state'.length)
       if (Object.hasOwn(versions, base)) {
         return response({ routeBase: base, serverVersion: versions[base], watchers: [] })
       }
       return response({ error: 'not found' }, false, 404)
     }
-    if (String(url).endsWith('/update')) return response({ current: '0.0.0', latest: null, hasUpdate: false })
+    if (parsed.pathname.endsWith('/update')) return response({ current: '0.0.0', latest: null, hasUpdate: false })
     return response({ ok: true })
   }
 
@@ -169,8 +170,14 @@ async function discoverWithVersions(versions) {
     useRef: (value) => ({ current: value }),
   }
   const registrations = []
+  const services = {
+    layout: { selectPanel() {} },
+    sidebarRight: { openTab() {} },
+    sidebarRightTabs: { register() { return () => {} } },
+  }
   const ctx = {
     effect: (fn) => fn(),
+    get: (name) => services[name],
     slots: {
       inject: (_name, fn) => fn(),
       register(options, Component) { registrations.push({ options, Component }); return () => {} },
@@ -180,9 +187,11 @@ async function discoverWithVersions(versions) {
     if (name === 'react') return React
     throw new Error('MODULE_NOT_FOUND: ' + name)
   }).apply(ctx)
-  const desk = registrations.find((item) => item.options.id === 'session-superagent-desk')
+  const desk = registrations.find((item) => item.options.name === 'main' && item.options.key === 'session-superagent')
   assert.ok(desk, '缺真实 ZhuliPanel 注册')
-  desk.Component({})
+  const root = desk.Component({})
+  assert.ok(root && typeof root.type === 'function', 'main 入口必须返回真实 SuperagentPage')
+  root.type(root.props || {})
   await new Promise((resolve) => setImmediate(resolve))
   await new Promise((resolve) => setImmediate(resolve))
   return calls
@@ -227,7 +236,7 @@ test('真实 discoverBase 按 SemVer 选实例：release/prerelease、major 与�
   ]
   for (const scenario of scenarios) {
     const calls = await discoverWithVersions(scenario.versions)
-    const stateCalls = calls.filter((url) => url === scenario.expected + '/state')
+    const stateCalls = calls.filter((url) => new URL(url, 'http://fixture.local').pathname === scenario.expected + '/state')
     assert.ok(stateCalls.length >= 2, scenario.name + '：发现后必须继续使用最高 precedence 的 base；实际 ' + calls.join(', '))
     const baseNote = calls.find((url) => url.includes('/client-note?key=client-base'))
     assert.ok(baseNote && baseNote.startsWith(scenario.expected + '/'), scenario.name + '：client-base 必须记录所选前缀')
@@ -240,6 +249,6 @@ test('discoverBase 跳过非法版本；同 precedence 的 build 不无故切换
     '/session-superagent/r2': ['0.9.274'],
     '/session-superagent/r3': '0.9.273+build.5',
   })
-  assert.equal(calls.filter((url) => url === '/session-superagent/state').length >= 2, true)
+  assert.equal(calls.filter((url) => new URL(url, 'http://fixture.local').pathname === '/session-superagent/state').length >= 2, true)
   assert.equal(calls.some((url) => url.includes('/client-note?key=client-base')), false)
 })
