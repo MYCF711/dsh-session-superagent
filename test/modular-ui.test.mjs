@@ -581,6 +581,33 @@ test('缺 sidebarRightTabs.register 时头部禁用并解释 definition 未注�
   assert.match(trigger.props.title, /sidebarRightTabs\.register 服务不存在/)
 })
 
+test('头部图标是官方鲸鱼线稿，且不再借用带底色的 toolbar variant', () => {
+  const { services } = navigationFixture()
+  const Tooltip = function HostTooltip() {}
+  const Button = function HostButton() {}
+  const client = loadClient({ services, primitives: { Tooltip, Button } })
+  const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
+  const tree = client.render(header, [null, false], { sessionId: 'session-a' })
+  const trigger = tree.props.children[0].props.children[0]
+  // 官方 Forge 的头部入口不传 variant：默认 ghost 才没有底色，toolbar 会带一块填充。
+  assert.equal(trigger.props.variant, 'ghost', '不得再用 toolbar（真机上就是那块深色底）')
+  assert.equal(trigger.props.className, 'dt-header-entry dt-header-entry-host')
+  const icon = trigger.props.icon
+  // 入口图标是 SuperagentNavIcon 包一层，里面必须是品牌鲸鱼而不是旧轨道环。
+  assert.equal(icon.type.name, 'SuperagentNavIcon')
+  const nodes = walk(icon)
+  const svg = nodes.find((node) => node.type === 'svg')
+  assert.equal(svg.props.viewBox, '0 0 50 50', '官方 whale 视口')
+  const path = nodes.find((node) => node.type === 'path')
+  assert.equal(path.props.fill, 'none', '线稿不填色')
+  assert.equal(path.props.stroke, 'currentColor', '颜色跟随主题文字色')
+  assert.ok(String(path.props.d).length > 2000, '用的是官方 whale path 本体')
+  // 只留主轮廓与尾鳍：眼睛(301)与腹部纹理(673)两段被去掉，16px 下才不会糊。
+  assert.equal(String(path.props.d).match(/[Mm]/g).length, 2, '简化后只剩两段子路径')
+  // 状态环只留在面板内部：入口里的鲸鱼自己不带卫星点。
+  assert.equal(nodes.filter((node) => node.type === 'circle').length, 0)
+})
+
 test('头部优先复用官方 Tooltip，缺原语才回退原生 title', () => {
   const { services } = navigationFixture()
   const Tooltip = function HostTooltip() {}

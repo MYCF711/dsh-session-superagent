@@ -892,11 +892,15 @@ test('面板与唤醒消息说的是同一套规则（AGENTS.md → 修/回/待�
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [watcher('a/b', { id: 'a/b#s1' })] },
   }
   const text = walk(render(desk, deskQueue(snap))).filter((n) => typeof n.text === 'string').map((n) => n.text).join(' ')
-  // 三件事必须都能在面板里找到，否则客户只看到"会叫醒我"，不知道叫醒之后发生什么
-  assert.ok(text.includes('AGENTS.md'), '面板要提到按仓库规则判断')
-  assert.ok(text.includes('修 / 回 / 待定'), '面板要给出三种处理方式')
-  assert.ok(text.includes('watch_ack'), '面板要说明最后要 ack')
-  assert.ok(text.includes('不会扩大范围'), '面板要说清只处理列出的那几条')
+  // 规则不再常驻主面板（四行灰字会把右栏挤成一团），但必须能在面板里查到：
+  // 挂在「判定」页问号提示上，客户问「叫醒之后会发生什么」时有据可依。
+  assert.ok(!text.includes('AGENTS.md'), '主面板不再常驻这段规则，避免挤成一团')
+  const tips = walk(render(desk, deskQueue(snap, null, {}, 'judge')))
+    .filter((n) => typeof n.text === 'string').map((n) => n.text).join(' ')
+  assert.ok(tips.includes('AGENTS.md'), '判定页提示要提到按仓库规则判断')
+  assert.ok(tips.includes('修 / 回 / 待定'), '判定页提示要给出三种处理方式')
+  assert.ok(tips.includes('watch_ack'), '判定页提示要说明最后要 ack')
+  assert.ok(tips.includes('不会扩大范围'), '判定页提示要说清只处理列出的那几条')
   // 隔离执行的说明在「触发」页，单独渲染一次
   const triggerText = walk(render(desk, deskQueue(snap, null, {}, 'trigger'))).filter((n) => typeof n.text === 'string').map((n) => n.text).join(' ')
   assert.ok(triggerText.includes('自动回收'), '隔离执行要说明用完会回收：' + triggerText.slice(0, 200))
