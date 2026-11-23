@@ -18,7 +18,7 @@
 
 ```text
 基线        上游 main@95b5a72（水位 v2 / 1.0.0）
-工作树      task-headless-polling（基于 b0b9d6a）；吸收上游 #68，待发实验仓 PR，不推主分支
+工作树      task-headless-polling（基于 b0b9d6a）；实验仓 PR #1 已开，未合并，不推主分支
 候选版本    1.1.0；20 个最小房间 + modular-runtime + modular-outbox-host
 默认行为    旧 watcher 仍 inline；只有显式 executionMode=worker 才创建独立 worker Session
 ```
@@ -56,6 +56,6 @@
 
 ## 三、下一步
 
-1. 将 headless 吸收改动提交到 `task-headless-polling`，只向独立实验仓 `task/modular-rooms` 开 PR，禁止推主分支。
-2. 核对 PR 的 Node 22/24 CI 与 headless 实例证据；不发布 tag / Release / npm。
+1. 实验仓 PR #1 已开，保持未合并；审查发现问题只追加 commit，禁止强推和直接推主分支。
+2. Node 22/24 CI 已通过（run 45110699550）；完成最终双盲复核与交接，不发布 tag / Release / npm。
 3. 有可写 Gitee 测试 issue/PR 后，补真实 ack + 写后重读并清理，再关闭该未验项。
