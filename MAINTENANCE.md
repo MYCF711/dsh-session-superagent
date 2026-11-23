@@ -28,7 +28,7 @@
 
 | 资产 / 验证 | 当前结果 |
 |---|---|
-| 全量单测 | **1416/1416，exit 0**；ACL 修复后串行全量通过，新增预置普通组 grant/deny 的真实 Windows 反向用例 |
+| 全量单测 | **1418/1418，exit 0**；隔离 preflight 41 PASS + 3 SKIP。新增 Cordis 未 inject admission 可选服务代理回归，修复重启后 watcher 首轮报错 |
 | 房间边界 | **20/20 PASS**；UI audit **11/11** |
 | Outbox | 同进程单飞、跨进程租约、热重载共享 flush、不同 Ticket 排队、attempts 栅栏均有回归 |
 | 生产接线 | worker/inline、bot/系统事件、ack 操作 ID、watcher 世代、marker 分页、执行模式切换已定向复验 |

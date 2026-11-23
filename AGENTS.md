@@ -144,7 +144,7 @@ node scripts/render-preview.mjs preview.html
 
 ## 十、当前基线
 
-2.0.0（独立实验仓候选）；全量 **1416/1416**、房间边界 **20/20**、preflight **44 项**（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、UI **11/11**。
+2.0.0（独立实验仓候选）；全量 **1418/1418**、房间边界 **20/20**、preflight **44 项**（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、UI **11/11**。
 无 `webServer` 的 headless 实例已完成 `watch_start`、重新 import/apply 与 interval 恢复验收；单守异常隔离及 `lastError` 落盘有独立测试。
 真实 Chromium：Issue #58 多段添加 / 编辑 / 删除 / 保存四项通过；Issue #60「只看新评论」新建、编辑保存与两次回读 **4/4** 通过。完整 harness 的 rc.2 Orbit/Modal 三项失败已由未改 main 复现（main 57/60，本分支含 #60 为 65/68），不记为本功能通过项。
 真实 `github` 工具 `POST /markdown` 请求体端到端验证通过（无仓库副作用）。

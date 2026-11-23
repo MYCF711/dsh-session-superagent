@@ -13,9 +13,11 @@
 
 ### Changed
 
-- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1416/1416、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 18/18；两组双盲均签收，用户已确认整版 UI；PR CI 是实验仓合入门。
+- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1418/1418、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 18/18；两组双盲均签收，用户已确认整版 UI；PR CI 是实验仓合入门。
 
 ### Fixed
+
+- **Cordis 可选 Admission 服务不再要求隐式 inject**：重启后的真实 watcher 首轮因直接读取 `ctx.admissionGate` / `ctx.admissionAssessment` 抛出 `without inject`。改为安全 `ctx.get()`，保留普通对象宿主兼容；新增会抛错的 Context 代理与宿主服务仍生效两条回归。
 
 - **Windows 凭证 ACL 不再残留普通用户组权限**：安装 Debug 发现 `/grant:r` 只替换当前用户 ACE，显式的 Authenticated Users、BUILTIN Users 与 Everyone grant/deny 会残留。改用当前用户 SID 授权，并按固定组 SID 同时删除 grant/deny，避免本地化名称差异；新增真实 `icacls` 预置反向用例，修复后仅保留当前用户完全控制。
 
