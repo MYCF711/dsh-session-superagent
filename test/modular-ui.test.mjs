@@ -581,6 +581,24 @@ test('缺 sidebarRightTabs.register 时头部禁用并解释 definition 未注�
   assert.match(trigger.props.title, /sidebarRightTabs\.register 服务不存在/)
 })
 
+test('宿主服务晚于插件就绪时头部仍能挂上（真机 sidebarRight 报服务不存在的根因）', () => {
+  const { services } = navigationFixture()
+  // apply 时宿主服务一个都还没有 —— 真机首次加载就是这个时序。
+  const live = {}
+  const client = loadClient({ services: live, deferInject: true })
+  assert.equal(client.registrations.some((r) => r.opts.id === 'session-superagent-current'), false,
+    '服务全缺时头部本来就不该注册')
+  // 宿主随后就绪，Cordis 触发 ctx.inject 回调
+  Object.assign(live, services)
+  assert.equal(client.flushInjects(), 1, '应登记过一次动态注入')
+  const header = client.registrations.find((r) => r.opts.id === 'session-superagent-current')
+  assert.ok(header, '服务就绪后必须补挂头部入口')
+  const tree = client.render(header, [null, false], { sessionId: 'session-a' })
+  const trigger = walk(tree).find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.ok(trigger, '必须渲染出头部按钮')
+  assert.equal(trigger.props.disabled, false, '拿到 sidebarRight 后不能再显示禁用')
+})
+
 test('头部图标是官方鲸鱼线稿，且不再借用带底色的 toolbar variant', () => {
   const { services } = navigationFixture()
   const Tooltip = function HostTooltip() {}

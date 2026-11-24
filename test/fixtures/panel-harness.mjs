@@ -22,6 +22,8 @@ export function loadClient(options = {}) {
   // window 级监听要能被用例触发（页签名称靠 'storage' 事件跟随其它页面）：
   // 以前 addEventListener 是空函数，注册了也永远收不到事件 —— 桩比运行时干净就会掩盖 bug。
   const windowListeners = new Map()
+  // Cordis 的 ctx.inject(deps, cb) 回调登记表（见下方 ctx.inject）
+  const deferredInjects = []
   const sandbox = {
     window: {
       __ModuleLoader__: { load(m) { mod = m } },
@@ -124,6 +126,8 @@ export function loadClient(options = {}) {
     effect: (fn) => fn(),
     // 真实宿主的可选服务入口；导航用例可显式覆盖 layout/sidebarRight/sessions。
     get: (name) => services[name],
+    // 记录 Cordis 的动态注入回调：宿主服务比插件晚就绪时靠它重挂入口。
+    inject: (_deps, fn) => { deferredInjects.push(fn); if (!options.deferInject) fn() },
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) {
@@ -177,6 +181,12 @@ export function loadClient(options = {}) {
   return {
     id: mod.id,
     registrations,
+    // 手动触发登记的 ctx.inject 回调，模拟「宿主服务晚于插件就绪」。
+    flushInjects: () => {
+      let called = 0
+      for (const fn of deferredInjects.splice(0)) { fn(); called += 1 }
+      return called
+    },
     // 还活着的注册（dispose 过的会被剔掉）—— 左栏/右栏改名重注册要按它断言，
     // 按 registrations 长度断言会把「旧的一条已释放」误判成重复。
     liveRegistrations: () => registrations.filter((registration) => live.has(registration)),

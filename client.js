@@ -5566,7 +5566,11 @@ window.__ModuleLoader__.load({
                 note(failureKey, String((error && error.message) || error))
               }
             })
-            return () => { stopWatching(); unmount() }
+            const cleanup = () => { stopWatching(); unmount() }
+            // 宿主服务可能比本插件晚就绪：记下 remount，服务到位后重挂一次，
+            // 让入口用「服务已可用」的新状态渲染（否则真机会一直显示禁用）。
+            cleanup.remount = remount
+            return cleanup
           } catch (error) {
             note(failureKey, String((error && error.message) || error))
             unmount()
@@ -5645,17 +5649,64 @@ window.__ModuleLoader__.load({
             name: 'sidebar.right.pane.tab.title', key: RIGHT_TAB_ID,
           }, SuperagentRightTabTitle)), 'right-title-fail')
         })
-        ctx.effect(() => {
-          if (!hostLayout && !hostSidebarRight && !hostSidebarRightTabs) return undefined
+        let headerRemount = null
+        let headerCleanup = null
+        const mountHeaderEntry = () => {
+          if (headerCleanup) return
+          if (!hostLayout && !hostSidebarRight && !hostSidebarRightTabs) return
           try {
-            return ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+            const cleanup = mountBrandEntry(() => ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
               name: 'conversation.session.header.utilities', id: HEADER_UTILITY_ID, order: -6,
-            }, SuperagentHeaderUtility))
+            }, SuperagentHeaderUtility)), 'header-utility-fail')
+            if (!cleanup) return
+            headerCleanup = cleanup
+            if (typeof cleanup.remount === 'function') headerRemount = cleanup.remount
           } catch (error) {
             note('header-utility-fail', String((error && error.message) || error))
-            return undefined
+          }
+        }
+        ctx.effect(() => {
+          mountHeaderEntry()
+          return () => {
+            if (headerCleanup) {
+              try { headerCleanup() } catch {}
+              headerCleanup = null
+              headerRemount = null
+            }
           }
         })
+
+        // 真机上 sidebarRight 等宿主服务可能在本插件 apply 之后才就绪：此时
+        // ctx.get('sidebarRight') 是 undefined，头部会被误判成「服务不存在」永久禁用
+        // （2026-11-24 真机截图）。用 Cordis 的 ctx.inject 等它们就绪后重取，
+        // 再重挂一次入口 —— 服务已到位就用新状态渲染，不到位仍然是原来的降级。
+        if (typeof ctx.inject === 'function') {
+          try {
+            ctx.inject(['sidebarRight', 'sidebarRightTabs', 'sessions'], (scoped) => {
+              const host = scoped && typeof scoped.get === 'function' ? scoped : ctx
+              const nextRight = optionalHostService(host, 'sidebarRight')
+              const nextTabs = optionalHostService(host, 'sidebarRightTabs')
+              const nextSessions = optionalHostService(host, 'sessions')
+              const nextLayout = optionalHostService(host, 'layout')
+              const changed = nextRight !== hostSidebarRight || nextTabs !== hostSidebarRightTabs
+                || nextSessions !== hostSessions || nextLayout !== hostLayout
+              hostSidebarRight = nextRight
+              hostSidebarRightTabs = nextTabs
+              hostSessions = nextSessions
+              if (nextLayout) hostLayout = nextLayout
+              if (!changed) return
+              note('host-services-ready', '收到 sidebarRight/sessions 服务，重挂头部与右栏入口')
+              if (headerCleanup && headerRemount) {
+                try { headerRemount() } catch {}
+              } else {
+                // apply 时服务全缺，头部当时根本没注册 —— 这里补挂。
+                mountHeaderEntry()
+              }
+            })
+          } catch (error) {
+            note('host-services-inject-fail', String((error && error.message) || error))
+          }
+        }
 
         // 同一浏览器的其它页面改了名字：storage 事件只当触发器，真值回 localStorage 读。
         // 该监听独立于任何页面是否打开，确保左栏/右栏与设置草稿都收到改名通知。
