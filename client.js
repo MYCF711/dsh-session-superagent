@@ -440,7 +440,7 @@ window.__ModuleLoader__.load({
     }
 
     // 客户端版本探针：每次模块加载写一次，用来确认浏览器里跑的是哪一版
-    const CLIENT_VERSION = '2.0.0'
+    const CLIENT_VERSION = '2.0.1'
 
     // 会话级导航使用官方 root/session slot。服务是可选的：老宿主没有它们时，
     // 全局页仍可用，头部入口明确禁用，Dock 保留旧操作列表；不能用猜来的路由代替真实服务。
