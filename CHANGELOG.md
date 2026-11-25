@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **点头部鲸鱼图标报 `sidebarRight: no tab type is registered as "sessionSuperagent"`**（2026-11-26 真机）。官方：宿主 `sidebarRight` / `sidebarRightTabs` 晚于插件 `apply` 就绪，`openTab(kind)` 只认宿主注册表里 inForce 的 definition。我们：2.0.0 的「服务晚就绪重挂」只补挂了会话头部，右栏 definition 与 `sidebar.right.pane.tab` / `.title` 仍只在 `apply` 的 `ctx.effect` 里注册一次 —— 服务晚到的实例上它们从未注册，而头部已按新服务启用，点下去就由宿主抛错。为什么以前没发现：单测夹具的 `openTab` 不校验 kind，桩比宿主干净。
+  修复分两层，审计（实现审计 + 对抗审计）各发现一半，均已修：
+  1. **入口与注册一起补**：definition / body / title 改为可重入 mount，在 Cordis `ctx.inject` 回调里**先补注册、再重挂头部**；左栏 `main` / `sidebar.panellist` 同样改为可重入（`layout` 晚到的实例上它们以前也永久缺失）。
+  2. **不再被无关服务绑死**：注入依赖按入口拆开 —— 右栏 definition 只依赖 `sidebarRightTabs`、头部只依赖 `sidebarRight`、全局页只依赖 `layout`；2.0.0 把三者与 `sessions` 绑在同一个 inject 上，`sessions` 缺失或晚到时右栏会永久不可用。
+  3. **幂等判据改成宿主事实**：mount 的早退条件从「本地 cleanup 非空」改为「宿主注册表里 `get(kind).id` 仍是本插件的 id」，宿主 HMR 换掉 service 实例后会自动重新注册；同名 kind 被别的插件 shadow 时头部禁用并说明被谁占用，而不是点开别人的页签。
+  4. **两个入口同一判定**：Dock/Orbit 与头部共用 `rightTabIssue()`，definition 没注册时直接降级并在弹层里说明原因（以前点下去把宿主内部错误塞进弹层，弹层没开时用户根本看不见）；注册失败时 tooltip 显示最近一次真实错误。
+  测试：导航夹具按宿主 registry 语义保真（`register`/`get`/`entries`、id/kind 冲突抛错、band shadow、inject 依赖就绪才触发、依赖重建可重放），新增「服务晚到必须补注册并真的能打开」「sessions 缺失不连累注册」「服务实例重建后重注册」「kind 被占用时禁用」「Dock 不把宿主错误当用户提示」「layout 晚到补挂左栏」等回归。当前全量 1428/1428、UI 11/11。
+
 ## [2.0.0] - 2026-11-23 —— 会话级导航与 session scope 隔离（实验候选）
 
 ### Added

@@ -28,7 +28,7 @@
 
 | 资产 / 验证 | 当前结果 |
 |---|---|
-| 全量单测 | **1420/1420，exit 0**；隔离 preflight 41 PASS + 3 SKIP。新增 Cordis 未 inject admission 可选服务代理回归，修复重启后 watcher 首轮报错 |
+| 全量单测 | **1428/1428，exit 0**；隔离 preflight 41 PASS + 3 SKIP。新增右栏入口「宿主服务晚到必须补注册 definition、注册失败头部禁用」两条回归（2.0.0 真机点击报 no tab type registered），以及 Cordis 未 inject admission 可选服务代理回归 |
 | 房间边界 | **20/20 PASS**；UI audit **11/11** |
 | Outbox | 同进程单飞、跨进程租约、热重载共享 flush、不同 Ticket 排队、attempts 栅栏均有回归 |
 | 生产接线 | worker/inline、bot/系统事件、ack 操作 ID、watcher 世代、marker 分页、执行模式切换已定向复验 |

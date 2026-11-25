@@ -24,6 +24,8 @@ export function loadClient(options = {}) {
   const windowListeners = new Map()
   // Cordis 的 ctx.inject(deps, cb) 回调登记表（见下方 ctx.inject）
   const deferredInjects = []
+  // 登记过的全部 inject 回调：模拟「宿主服务重建后 Cordis 重跑回调」时用 replayInjects()
+  const injectCalls = []
   const sandbox = {
     window: {
       __ModuleLoader__: { load(m) { mod = m } },
@@ -112,22 +114,42 @@ export function loadClient(options = {}) {
   const defaultSessionCatalog = { phase: 'ready', byId: { s1: { title: '当前项目会话' }, 'session-a': { title: '会话 A' } } }
   // 旧用例默认渲染共享主面板；中栏删除后给它真实的全局入口与目标会话目录。
   // 传 services（包括显式传 {}）时仍严格使用调用方环境，用于缺失服务降级用例。
+  // 默认 sidebarRightTabs 按宿主 registry 最小保真：register 存 definition，get/entries 可查。
+  // 以前只有 register —— client.js 的可用性判定在桩上永远走「查不到也放行」分支，
+  // 于是「注册没跑到、头部却显示可点」这种真机 bug 在桩里全绿。
+  const defaultDefinitions = new Map()
   const services = options.services === undefined ? {
     layout: { selectPanel() {} },
     sidebarRight: { openTab() {} },
-    sidebarRightTabs: { register() { return () => {} } },
+    sidebarRightTabs: {
+      register(definition) {
+        defaultDefinitions.set(definition.kind, definition)
+        return () => {
+          if (defaultDefinitions.get(definition.kind) === definition) defaultDefinitions.delete(definition.kind)
+        }
+      },
+      get: (kind) => defaultDefinitions.get(kind),
+      entries: () => [...defaultDefinitions.values()],
+    },
     sessions: { list: { getSnapshot: () => defaultSessionCatalog }, refresh: async () => {} },
   } : options.services
   // 槽位注册的「活着」集合：真宿主对 list 槽位「同 id + 同 priority」重复注册会抛错
   // （ui-conversation 的 viewTabs 靠它保证页签不重复）。桩以前返回空 disposer、从不检查，
   // 于是「改名忘了先 dispose」这种错在桩里全绿、到真机才炸。这里按宿主语义照做。
   const live = new Set()
+  // 记录 Cordis 的动态注入回调：真实 ctx.inject(deps, cb) 是子插件 fiber ——
+  // 依赖未就绪不触发，依赖重建会 re-run。桩以前忽略 deps 且只跑一次，
+  // 于是「sessions 缺失 → definition 永不注册」「服务重建后不重注册」都测不出来。
   const ctx = {
     effect: (fn) => fn(),
     // 真实宿主的可选服务入口；导航用例可显式覆盖 layout/sidebarRight/sessions。
     get: (name) => services[name],
-    // 记录 Cordis 的动态注入回调：宿主服务比插件晚就绪时靠它重挂入口。
-    inject: (_deps, fn) => { deferredInjects.push(fn); if (!options.deferInject) fn() },
+    inject: (deps, fn) => {
+      const call = { deps: deps || [], fn }
+      injectCalls.push(call)
+      if (options.deferInject) deferredInjects.push(call)
+      else fn()
+    },
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) {
@@ -182,9 +204,29 @@ export function loadClient(options = {}) {
     id: mod.id,
     registrations,
     // 手动触发登记的 ctx.inject 回调，模拟「宿主服务晚于插件就绪」。
+    // 只跑依赖已经齐了的回调；未齐的留在表里等下一次 flush —— 宿主就是这么等依赖的。
     flushInjects: () => {
       let called = 0
-      for (const fn of deferredInjects.splice(0)) { fn(); called += 1 }
+      const pending = []
+      for (const call of deferredInjects.splice(0)) {
+        if (!call.deps.every((name) => services[name] !== undefined)) {
+          pending.push(call)
+          continue
+        }
+        call.fn()
+        called += 1
+      }
+      deferredInjects.push(...pending)
+      return called
+    },
+    // 模拟 Cordis 在依赖服务被重建后重跑 inject 回调（宿主 HMR / 服务 re-provide）。
+    replayInjects: () => {
+      let called = 0
+      for (const call of injectCalls) {
+        if (!call.deps.every((name) => services[name] !== undefined)) continue
+        call.fn()
+        called += 1
+      }
       return called
     },
     // 还活着的注册（dispose 过的会被剔掉）—— 左栏/右栏改名重注册要按它断言，

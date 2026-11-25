@@ -9,17 +9,70 @@ const GLOBAL_PANEL_ID = 'session-superagent'
 const RIGHT_TAB_ID = 'dsh-session-superagent/session'
 const RIGHT_TAB_KIND = 'sessionSuperagent'
 
+// 宿主 SidebarRightTabRegistry 的最小保真版：id 唯一、同 kind 同 band 冲突即抛，
+// 同 kind 不同 band 按 rank shadow（extension > builtin > fallback），
+// get(kind) 返回 inForce definition —— client.js 的可用性判定就查这张表。
+function rightTabRegistry(calls) {
+  const RANKS = { extension: 3, builtin: 2, fallback: 1 }
+  const slots = new Map()
+  const ids = new Set()
+  return {
+    register(definition) {
+      if (ids.has(definition.id)) throw new Error('sidebarRight: tab type id "' + definition.id + '" is already registered')
+      const band = definition.priority || 'extension'
+      const held = slots.get(definition.kind)
+      if (held && held.inForce.band === band) throw new Error('sidebarRight: tab kind "' + definition.kind + '" is already registered (' + band + ')')
+      const entry = { definition, band }
+      ids.add(definition.id)
+      calls.definitions.push(definition)
+      if (!held) slots.set(definition.kind, { inForce: entry, shadowed: null })
+      else if (RANKS[band] > RANKS[held.inForce.band]) {
+        held.shadowed = held.inForce
+        held.inForce = entry
+      } else held.shadowed = entry
+      return () => {
+        ids.delete(definition.id)
+        const slot = slots.get(definition.kind)
+        if (!slot) return
+        if (slot.inForce !== entry) {
+          if (slot.shadowed === entry) slot.shadowed = null
+          return
+        }
+        if (!slot.shadowed) slots.delete(definition.kind)
+        else {
+          slot.inForce = slot.shadowed
+          slot.shadowed = null
+        }
+      }
+    },
+    get: (kind) => slots.get(kind)?.inForce.definition,
+    entries: () => [...slots.values()].map((slot) => slot.inForce.definition),
+    // 模拟别的插件先用同 kind 占位
+    seed(definition) {
+      const band = definition.priority || 'extension'
+      ids.add(definition.id)
+      slots.set(definition.kind, { inForce: { definition, band }, shadowed: null })
+    },
+  }
+}
+
 function navigationFixture() {
   const calls = { selectPanel: [], openTab: [], hide: [], definitions: [] }
   const tabs = []
   const listeners = new Set()
   const emit = () => { for (const listener of [...listeners]) listener() }
+  // 宿主 registry 的语义：register 把 definition 放进按 kind 索引的表，dispose 摘掉；
+  // openTab 在 kind 没注册时抛错（client.js 里那条 no tab type is registered 的来源）。
+  const registry = rightTabRegistry(calls)
   const sessionCatalog = { phase: 'ready', byId: { 'session-a': { title: '会话 A' }, 'session-b': { title: '会话 B' } } }
   const services = {
     layout: { selectPanel: (id) => { calls.selectPanel.push(id) } },
     sidebarRight: {
-      openTab: (...args) => {
-        calls.openTab.push(args)
+      openTab: (kind, options) => {
+        if (!registry.get(kind)) {
+          throw new Error('sidebarRight: no tab type is registered as "' + kind + '"')
+        }
+        calls.openTab.push(options === undefined ? [kind] : [kind, options])
         const existing = tabs.find((tab) => tab.sessionId === 'session-a' && tab.kind === RIGHT_TAB_KIND)
         if (existing) existing.visible = true
         else tabs.push({ id: 'session-tab', sessionId: 'session-a', kind: RIGHT_TAB_KIND, visible: true })
@@ -34,12 +87,10 @@ function navigationFixture() {
         emit()
       },
     },
-    sidebarRightTabs: {
-      register: (definition) => { calls.definitions.push(definition); return () => {} },
-    },
+    sidebarRightTabs: registry,
     sessions: { list: { getSnapshot: () => sessionCatalog }, refresh: async () => {} },
   }
-  return { calls, services, tabs, emit }
+  return { calls, services, tabs, emit, registry }
 }
 
 function registered(client, name, key) {
@@ -590,13 +641,165 @@ test('宿主服务晚于插件就绪时头部仍能挂上（真机 sidebarRight 
     '服务全缺时头部本来就不该注册')
   // 宿主随后就绪，Cordis 触发 ctx.inject 回调
   Object.assign(live, services)
-  assert.equal(client.flushInjects(), 1, '应登记过一次动态注入')
+  assert.equal(client.flushInjects(), 3, '三个依赖组（sidebarRightTabs / sidebarRight / layout）各自的 inject 都应触发')
   const header = client.registrations.find((r) => r.opts.id === 'session-superagent-current')
   assert.ok(header, '服务就绪后必须补挂头部入口')
   const tree = client.render(header, [null, false], { sessionId: 'session-a' })
   const trigger = walk(tree).find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
   assert.ok(trigger, '必须渲染出头部按钮')
   assert.equal(trigger.props.disabled, false, '拿到 sidebarRight 后不能再显示禁用')
+})
+
+test('宿主 sidebarRightTabs 晚于 apply 就绪时右栏 definition 必须补注册，点头部不再报 no tab type registered', async () => {
+  const { calls, services } = navigationFixture()
+  // apply 时宿主一个服务都还没有 —— 真机首次加载就是这个时序。
+  const live = {}
+  const client = loadClient({ services: live, deferInject: true })
+  Object.assign(live, services)
+  assert.equal(client.flushInjects(), 3, '三个依赖组的 inject 都应触发')
+
+  assert.equal(calls.definitions.length, 1, '服务就绪后必须补注册右栏 definition')
+  assert.equal(calls.definitions[0].id, RIGHT_TAB_ID)
+  assert.equal(calls.definitions[0].kind, RIGHT_TAB_KIND)
+  assert.ok(client.liveRegistrations().some((item) => item.opts.name === 'sidebar.right.pane.tab'
+    && item.opts.key === RIGHT_TAB_ID), '服务就绪后必须补挂右栏 body')
+  assert.ok(client.liveRegistrations().some((item) => item.opts.name === 'sidebar.right.pane.tab.title'
+    && item.opts.key === RIGHT_TAB_ID), '服务就绪后必须补挂右栏标题')
+
+  const header = client.registrations.find((item) => item.opts.id === 'session-superagent-current')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props.disabled, false)
+  await trigger.props.onClick()
+  assert.deepEqual(calls.openTab, [[RIGHT_TAB_KIND]], '补注册后点击必须真的打开右栏')
+  assert.equal(client.stateCalls().some((call) => call.index === 0 && typeof call.next === 'string'), false,
+    '不得渲染「切换右栏失败」')
+})
+
+test('definition 注册失败时头部保持禁用并给出真实原因，不伪装成可点', () => {
+  const { services } = navigationFixture()
+  services.sidebarRightTabs = {
+    register() { throw new Error('sidebarRight: tab type id "test/duplicate" is already registered') },
+    get: () => undefined,
+    entries: () => [],
+  }
+  const client = loadClient({ services })
+  const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props.disabled, true)
+  assert.equal(trigger.props.title,
+    '主理鱼右栏注册失败：sidebarRight: tab type id "test/duplicate" is already registered',
+    '注册失败必须显示真实原因，不能只说「尚未注册」')
+  assert.equal(typeof trigger.props.onClick, 'function')
+})
+
+test('sessions 服务永远不到时右栏 definition 仍必须注册（注册不能绑在 sessions 上）', async () => {
+  const { calls, services } = navigationFixture()
+  const live = {}
+  const client = loadClient({ services: live, deferInject: true })
+  Object.assign(live, services)
+  delete live.sessions
+  assert.ok(client.flushInjects() > 0, 'sidebarRight/sidebarRightTabs 已就绪，对应 inject 必须触发')
+  assert.equal(calls.definitions.length, 1, 'sessions 缺失不能连累右栏 definition 注册')
+  const header = client.registrations.find((item) => item.opts.id === 'session-superagent-current')
+  assert.ok(header, 'sessions 缺失时头部仍应挂上（头部只需要 sidebarRight）')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props.disabled, false)
+  await trigger.props.onClick()
+  assert.deepEqual(calls.openTab, [[RIGHT_TAB_KIND]])
+})
+
+test('sidebarRight 晚于 sidebarRightTabs 到达时头部要转成可用，不能被依赖顺序永久禁用', async () => {
+  const { calls, services } = navigationFixture()
+  const live = { sidebarRightTabs: services.sidebarRightTabs }
+  const client = loadClient({ services: live, deferInject: true })
+  assert.equal(client.flushInjects(), 1, '只有 sidebarRightTabs 就绪时只触发它那一组')
+  // 此时 definition 已注册，但 sidebarRight 还没到：头部可以挂、必须明确说缺什么（不能假装可用）。
+  const early = client.registrations.find((item) => item.opts.id === 'session-superagent-current')
+  if (early) {
+    const earlyTrigger = walk(client.render(early, [null, false], { sessionId: 'session-a' }))
+      .find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+    assert.equal(earlyTrigger.props.disabled, true, 'sidebarRight 未就绪时不能显示可用')
+    assert.match(earlyTrigger.props.title, /sidebarRight\.openTab 服务不存在/)
+  }
+  // 宿主随后补齐 sidebarRight —— 此时 definition 已注册，头部必须跟着可用。
+  live.sidebarRight = services.sidebarRight
+  live.layout = services.layout
+  live.sessions = services.sessions
+  assert.ok(client.flushInjects() > 0)
+  const header = client.registrations.find((item) => item.opts.id === 'session-superagent-current')
+  assert.ok(header, 'sidebarRight 就绪后必须补挂头部')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props.disabled, false, '不能因为 sidebarRight 后到而永久禁用')
+  assert.equal(trigger.props.title, '本会话的主理鱼')
+  await trigger.props.onClick()
+  assert.deepEqual(calls.openTab, [[RIGHT_TAB_KIND]])
+})
+
+test('宿主 registry 实例被重建后必须重新注册，不能因为本地已有 cleanup 就永久丢失右栏', async () => {
+  const { calls, services } = navigationFixture()
+  const live = {}
+  const client = loadClient({ services: live, deferInject: true })
+  Object.assign(live, services)
+  client.flushInjects()
+  assert.equal(calls.definitions.length, 1)
+
+  // 宿主 HMR：服务换成新的空 registry，旧注册随旧 ctx 一起消失。
+  const rebuilt = rightTabRegistry(calls)
+  live.sidebarRightTabs = rebuilt
+  assert.ok(client.replayInjects() > 0, '依赖重建时 Cordis 会重跑 inject 回调')
+  assert.equal(rebuilt.get(RIGHT_TAB_KIND)?.id, RIGHT_TAB_ID, '必须把 definition 注册到新 registry')
+
+  const header = client.registrations.find((item) => item.opts.id === 'session-superagent-current')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props.disabled, false)
+})
+
+test('同 kind 被别的插件占住时头部必须禁用，不能点开别人的页签', async () => {
+  const { services, registry } = navigationFixture()
+  registry.seed({ id: 'other/plugin', kind: RIGHT_TAB_KIND, priority: 'extension', title: () => '别人的页签' })
+  const client = loadClient({ services })
+  const header = registered(client, 'conversation.session.header.utilities', 'session-superagent-current')
+  const nodes = walk(client.render(header, [null, false], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && node.props['aria-label'] === '本会话的主理鱼')
+  assert.equal(trigger.props.disabled, true, 'kind 在 registry 里不是我们的 definition 时不能算可用')
+  assert.match(trigger.props.title, /已被 other\/plugin 占用/, '必须说明被谁占了，而不是笼统地说未注册')
+  assert.equal(registry.get(RIGHT_TAB_KIND)?.id, 'other/plugin', '夹具前提：被 shadow 的是我们')
+})
+
+test('definition 没注册时 Dock 入口不得触发宿主错误，降级原因要看得见', async () => {
+  const { services } = navigationFixture()
+  services.sidebarRightTabs = {
+    register() { throw new Error('sidebarRight: tab type id "test/duplicate" is already registered') },
+    get: () => undefined,
+    entries: () => [],
+  }
+  const client = loadClient({ services })
+  const orbit = registered(client, 'conversation.composer.dock', 'session-superagent-orbit')
+  const nodes = walk(client.render(orbit, [[], null, true, { x: 320, y: 640 }, '主理鱼'], { sessionId: 'session-a' }))
+  const trigger = nodes.find((node) => node.type === 'button' && String(node.props.className).includes('sa-orbit-trigger'))
+  assert.ok(trigger)
+  await trigger.props.onClick()
+  const errors = client.stateCalls().filter((call) => call.index === 1 && typeof call.next === 'string')
+  assert.equal(errors.some((call) => /no tab type is registered/.test(call.next)), false,
+    'Dock 不得把宿主内部错误当成用户提示（且弹层没开时根本看不见）')
+  assert.match(flatText(nodes), /已保留旧操作列表/)
+})
+
+test('layout 晚于 apply 就绪时左栏全局页与品牌入口必须补挂', () => {
+  const { services } = navigationFixture()
+  const live = { sidebarRight: services.sidebarRight, sidebarRightTabs: services.sidebarRightTabs }
+  const client = loadClient({ services: live, deferInject: true })
+  assert.equal(client.registrations.some((item) => item.opts.name === 'main'), false)
+  live.layout = services.layout
+  live.sessions = services.sessions
+  assert.ok(client.flushInjects() > 0)
+  assert.ok(registered(client, 'main', GLOBAL_PANEL_ID), 'layout 就绪后必须补挂左侧全局页')
+  assert.ok(registered(client, 'sidebar.panellist', GLOBAL_PANEL_ID), 'layout 就绪后必须补挂品牌入口')
 })
 
 test('头部图标是官方鲸鱼线稿，且不再借用带底色的 toolbar variant', () => {

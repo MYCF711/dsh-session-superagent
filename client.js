@@ -449,6 +449,8 @@ window.__ModuleLoader__.load({
     const RIGHT_TAB_KIND = 'sessionSuperagent'
     const RIGHT_TAB_UNAVAILABLE = '宿主 sidebarRight.openTab 服务不存在'
     const RIGHT_TAB_DEFINITION_UNAVAILABLE = '宿主 sidebarRightTabs.register 服务不存在'
+    const RIGHT_TAB_DEFINITION_PENDING = '宿主 sidebarRightTabs 尚未注册本页签'
+    let rightRegistrationError = null
     const HEADER_UTILITY_ID = 'session-superagent-current'
     let hostLayout = null
     let hostSidebarRight = null
@@ -481,6 +483,44 @@ window.__ModuleLoader__.load({
       }
       // 右栏 session slot 自带当前 sessionId；调用方只传 kind，不拼 sidebar:// 地址或伪造 params。
       return hostSidebarRight.openTab(RIGHT_TAB_KIND)
+    }
+    // 宿主 openTab 在 kind 没有注册时直接抛 `sidebarRight: no tab type is registered as "…"`，
+    // 所以入口可用性必须以宿主注册表的真实内容为准：既要 kind 在，也要 inForce 的 definition
+    // 就是我们这一条（同 kind 被别的插件 shadow 时 get(kind) 返回的是别人，点开会是别人的页签）。
+    function rightTabOwnedByUs() {
+      if (!hostSidebarRightTabs) return false
+      try {
+        if (typeof hostSidebarRightTabs.get === 'function') {
+          const definition = hostSidebarRightTabs.get(RIGHT_TAB_KIND)
+          return Boolean(definition && definition.id === RIGHT_TAB_ID)
+        }
+        if (typeof hostSidebarRightTabs.entries === 'function') {
+          const entries = hostSidebarRightTabs.entries() || []
+          return entries.some((definition) => definition
+            && definition.kind === RIGHT_TAB_KIND && definition.id === RIGHT_TAB_ID)
+        }
+      } catch {
+        return false
+      }
+      // 宿主只暴露 register（老宿主/测试桩）时无法查询：按已注册处理，保持原有的 open-only 行为。
+      return true
+    }
+
+    // 会话头部与 Dock/Orbit 共用同一个判定：null 表示「现在点下去宿主一定按我们的 kind 打开」。
+    // 只看 register 方法是否存在会把「服务在、注册却没跑到」显示成可点 —— 真机上就是那条红字。
+    function rightTabIssue() {
+      if (!hostSidebarRight || typeof hostSidebarRight.openTab !== 'function') return RIGHT_TAB_UNAVAILABLE
+      if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return RIGHT_TAB_DEFINITION_UNAVAILABLE
+      if (rightTabOwnedByUs()) return null
+      // kind 在、但不是我们的 definition：可能被别的插件 shadow（extension band 更高）。
+      try {
+        const held = typeof hostSidebarRightTabs.get === 'function'
+          ? hostSidebarRightTabs.get(RIGHT_TAB_KIND)
+          : null
+        if (held && held.id !== RIGHT_TAB_ID) return '主理鱼右栏页签已被 ' + String(held.id || '其它插件') + ' 占用'
+      } catch {}
+      if (rightRegistrationError) return '主理鱼右栏注册失败：' + rightRegistrationError
+      return RIGHT_TAB_DEFINITION_PENDING
     }
     // SEMVER_COMPARATOR_SOURCE_START
     // This block is duplicated verbatim in client.js because the browser UMD cannot import ESM.
@@ -2437,7 +2477,10 @@ window.__ModuleLoader__.load({
     }
     function StatusOrbit(props = {}) {
       // Dock 的 session slot 已提供当前 sessionId；右栏打开动作只传 kind。
-      const canOpenRight = Boolean(props.sessionId && hostSidebarRight && typeof hostSidebarRight.openTab === 'function')
+      // 与头部共用 rightTabIssue()：definition 没注册时要直接降级并说明原因 ——
+      // 以前这里只看 openTab 存在，点击把宿主内部错误塞进弹层（弹层没开时用户根本看不见）。
+      const rightIssue = rightTabIssue()
+      const canOpenRight = Boolean(props.sessionId && !rightIssue)
       const [watchers, setWatchers] = useState(null)
       // 写操作的失败提示（M4）：为空表示没有错误
       const [orbitError, setOrbitError] = useState(null)
@@ -2792,7 +2835,9 @@ window.__ModuleLoader__.load({
         !canOpenRight ? h('div', { className: 'sa-dock-foot', role: 'status' },
           !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
             ? '宿主 sidebarRight 服务不存在；已保留旧操作列表。'
-            : '当前 Dock 没有 sessionId；已保留旧操作列表，未读取右栏。') : null,
+            : !props.sessionId
+              ? '当前 Dock 没有 sessionId；已保留旧操作列表，未读取右栏。'
+              : (rightIssue || RIGHT_TAB_UNAVAILABLE) + '；已保留旧操作列表。') : null,
         list.length > 0
           ? h('div', { className: 'sa-dock-foot' }, '详细状态与凭证在「' + brandName + '」标签页')
           : null)
@@ -5489,11 +5534,7 @@ window.__ModuleLoader__.load({
       }, [props.sessionId])
       const unavailable = !props.sessionId
         ? '当前头部 slot 没有 sessionId'
-        : !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
-          ? RIGHT_TAB_UNAVAILABLE
-          : !hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function'
-            ? RIGHT_TAB_DEFINITION_UNAVAILABLE
-            : null
+        : rightTabIssue()
       const toggle = async () => {
         if (unavailable) return
         try {
@@ -5547,8 +5588,15 @@ window.__ModuleLoader__.load({
         // 品牌名同时驱动左栏、右栏 definition 与右栏标题。旧中栏删除后，
         // 改名订阅仍保留在这些存活入口上：先释放原注册，再按同 id/key/component 重注册。
         tabNameOverride = readTabNameOverride()
-        const mountBrandEntry = (mount, failureKey) => {
+        const mountBrandEntry = (mount, failureKey, onFailure) => {
           let dispose = null
+          const fail = (error) => {
+            const message = String((error && error.message) || error)
+            note(failureKey, message)
+            if (typeof onFailure === 'function') {
+              try { onFailure(message) } catch {}
+            }
+          }
           const unmount = () => {
             if (!dispose) return
             const current = dispose
@@ -5563,7 +5611,7 @@ window.__ModuleLoader__.load({
             remount()
             const stopWatching = subscribeTabName(() => {
               try { remount() } catch (error) {
-                note(failureKey, String((error && error.message) || error))
+                fail(error)
               }
             })
             const cleanup = () => { stopWatching(); unmount() }
@@ -5572,7 +5620,7 @@ window.__ModuleLoader__.load({
             cleanup.remount = remount
             return cleanup
           } catch (error) {
-            note(failureKey, String((error && error.message) || error))
+            fail(error)
             unmount()
             return undefined
           }
@@ -5590,64 +5638,138 @@ window.__ModuleLoader__.load({
         hostOpenSession = openSession
 
         // 左侧全局中枢：main 与 sidebar.panellist 使用同一个 panel id。
-        ctx.effect(() => {
+        // layout 同样可能晚于 apply 就绪（与右栏同源问题）：只挂一次会让左栏全局页永久缺失，
+        // 所以也做成可重入 mount，由下方 ctx.inject(['layout']) 在服务到位后补挂。
+        let globalEntriesCleanup = null
+        let globalEntriesHost = null
+        const unmountGlobalEntries = () => {
+          if (globalEntriesCleanup) {
+            try { globalEntriesCleanup() } catch {}
+          }
+          globalEntriesCleanup = null
+          globalEntriesHost = null
+        }
+        const mountGlobalEntries = () => {
           if (!hostLayout || typeof hostLayout.selectPanel !== 'function') {
             noteOnce('layout-unavailable', 'layout.selectPanel 服务不存在；不注册无法选择的全局入口')
-            return undefined
+            return
           }
+          if (globalEntriesCleanup && globalEntriesHost === hostLayout) return
+          unmountGlobalEntries()
+          const disposers = []
           try {
-            return ctx.slots.inject('main', () => ctx.slots.register({
+            const disposePanel = ctx.slots.inject('main', () => ctx.slots.register({
               name: 'main', key: GLOBAL_PANEL_ID,
             }, SuperagentGlobalPage))
+            if (typeof disposePanel === 'function') disposers.push(disposePanel)
           } catch (error) {
             note('global-panel-fail', String((error && error.message) || error))
-            return undefined
           }
-        })
-        ctx.effect(() => {
-          if (!hostLayout || typeof hostLayout.selectPanel !== 'function') return undefined
-          return mountBrandEntry(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          const sidebarCleanup = mountBrandEntry(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
             name: 'sidebar.panellist', id: GLOBAL_PANEL_ID, order: 20,
             label: () => tabNameLabel(),
           }, SuperagentNavIcon)), 'global-sidebar-fail')
+          if (sidebarCleanup) disposers.push(sidebarCleanup)
+          if (!disposers.length) return
+          globalEntriesCleanup = () => {
+            for (const dispose of disposers.reverse()) {
+              try { dispose() } catch {}
+            }
+          }
+          globalEntriesHost = hostLayout
+        }
+        ctx.effect(() => {
+          mountGlobalEntries()
+          return unmountGlobalEntries
         })
 
         // 右栏 page type：definition.id 用于 keyed body/title 分派，definition.kind 用于 openTab。
-        ctx.effect(() => {
-          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') {
-            noteOnce('sidebar-right-tabs-unavailable', 'sidebarRightTabs.register 服务不存在；会话头部入口显示不可用原因')
-            return undefined
+        // 这三件事都依赖宿主 sidebarRightTabs 就绪。真机上该服务晚于本插件 apply，而 ctx.effect
+        // 只在 apply 跑一次 —— 只靠 ctx.effect 会出现「服务到位后头部被启用、definition 却没注册」，
+        // 点下去宿主抛 `sidebarRight: no tab type is registered as "sessionSuperagent"`。
+        // 所以拆成可重入的 mount 函数：apply 时试一次，服务到位/重建时（见下方 ctx.inject）再试。
+        // 幂等判据必须看「宿主注册表里还有没有我们的 id」：宿主 HMR 换掉 service 实例后，
+        // 本地 cleanup 还在，但新 registry 是空的 —— 只看本地 flag 会把右栏永久丢掉。
+        const canRegisterRightTab = () => Boolean(hostSidebarRightTabs
+          && typeof hostSidebarRightTabs.register === 'function')
+        let rightDefinitionCleanup = null
+        let rightDefinitionHost = null
+        let rightPaneCleanup = null
+        let rightPaneHost = null
+        const unmountRightDefinition = () => {
+          if (rightDefinitionCleanup) {
+            try { rightDefinitionCleanup() } catch {}
           }
-          return mountBrandEntry(() => hostSidebarRightTabs.register({
-            id: RIGHT_TAB_ID,
-            kind: RIGHT_TAB_KIND,
-            priority: 'builtin',
-            title: () => tabNameLabel(),
-            guide: [{
-              id: 'session-superagent',
-              order: 20,
+          rightDefinitionCleanup = null
+          rightDefinitionHost = null
+        }
+        const mountRightDefinition = () => {
+          if (!canRegisterRightTab()) {
+            noteOnce('sidebar-right-tabs-unavailable', 'sidebarRightTabs.register 服务不存在；会话头部入口显示不可用原因')
+            return
+          }
+          if (rightDefinitionCleanup && rightDefinitionHost === hostSidebarRightTabs && rightTabOwnedByUs()) return
+          unmountRightDefinition()
+          const cleanup = mountBrandEntry(() => {
+            const dispose = hostSidebarRightTabs.register({
+              id: RIGHT_TAB_ID,
+              kind: RIGHT_TAB_KIND,
+              priority: 'builtin',
               title: () => tabNameLabel(),
-              description: () => '查看当前项目会话的 watcher、Ticket、执行、Outbox 与草稿',
-              icon: SuperagentNavIcon,
-            }],
-          }), 'right-definition-fail')
-        })
-        ctx.effect(() => {
-          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
+              guide: [{
+                id: 'session-superagent',
+                order: 20,
+                title: () => tabNameLabel(),
+                description: () => '查看当前项目会话的 watcher、Ticket、执行、Outbox 与草稿',
+                icon: SuperagentNavIcon,
+              }],
+            })
+            rightRegistrationError = null
+            return dispose
+          }, 'right-definition-fail', (message) => { rightRegistrationError = message })
+          if (!cleanup) return
+          rightDefinitionCleanup = cleanup
+          rightDefinitionHost = hostSidebarRightTabs
+        }
+        const unmountRightPane = () => {
+          if (rightPaneCleanup) {
+            try { rightPaneCleanup() } catch {}
+          }
+          rightPaneCleanup = null
+          rightPaneHost = null
+        }
+        const mountRightPane = () => {
+          if (!canRegisterRightTab()) return
+          if (rightPaneCleanup && rightPaneHost === hostSidebarRightTabs) return
+          unmountRightPane()
+          const disposers = []
           try {
-            return ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+            const disposeBody = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
               name: 'sidebar.right.pane.tab', key: RIGHT_TAB_ID,
             }, SuperagentSessionPage))
+            if (typeof disposeBody === 'function') disposers.push(disposeBody)
           } catch (error) {
             note('right-tab-fail', String((error && error.message) || error))
-            return undefined
           }
-        })
-        ctx.effect(() => {
-          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
-          return mountBrandEntry(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+          const titleCleanup = mountBrandEntry(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
             name: 'sidebar.right.pane.tab.title', key: RIGHT_TAB_ID,
           }, SuperagentRightTabTitle)), 'right-title-fail')
+          if (titleCleanup) disposers.push(titleCleanup)
+          if (!disposers.length) return
+          rightPaneCleanup = () => {
+            for (const dispose of disposers.reverse()) {
+              try { dispose() } catch {}
+            }
+          }
+          rightPaneHost = hostSidebarRightTabs
+        }
+        ctx.effect(() => {
+          mountRightDefinition()
+          mountRightPane()
+          return () => {
+            unmountRightDefinition()
+            unmountRightPane()
+          }
         })
         let headerRemount = null
         let headerCleanup = null
@@ -5676,35 +5798,49 @@ window.__ModuleLoader__.load({
           }
         })
 
-        // 真机上 sidebarRight 等宿主服务可能在本插件 apply 之后才就绪：此时
-        // ctx.get('sidebarRight') 是 undefined，头部会被误判成「服务不存在」永久禁用
-        // （2026-11-24 真机截图）。用 Cordis 的 ctx.inject 等它们就绪后重取，
-        // 再重挂一次入口 —— 服务已到位就用新状态渲染，不到位仍然是原来的降级。
+        // 真机上 sidebarRight 等宿主服务可能在本插件 apply 之后才就绪，也可能在宿主 HMR 时
+        // 被换成新实例：Cordis 的 ctx.inject(deps, cb) 是子插件 fiber —— 依赖到位时跑一次，
+        // 依赖重建再跑。各入口的依赖要拆开：右栏 definition 只依赖 sidebarRightTabs，
+        // 头部只依赖 sidebarRight，全局页只依赖 layout。把它们绑在同一个 inject 上，
+        // 任一服务缺失/晚到就会连累其余入口（2.0.0 真机：sessions 缺失 → definition 永不注册）。
+        const refreshHostServices = (scoped) => {
+          const host = scoped && typeof scoped.get === 'function' ? scoped : ctx
+          const nextRight = optionalHostService(host, 'sidebarRight')
+          const nextTabs = optionalHostService(host, 'sidebarRightTabs')
+          const nextSessions = optionalHostService(host, 'sessions')
+          const nextLayout = optionalHostService(host, 'layout')
+          const changed = nextRight !== hostSidebarRight || nextTabs !== hostSidebarRightTabs
+            || nextSessions !== hostSessions || nextLayout !== hostLayout
+          hostSidebarRight = nextRight
+          hostSidebarRightTabs = nextTabs
+          hostSessions = nextSessions
+          if (nextLayout) hostLayout = nextLayout
+          return changed
+        }
+        const onHostServicesReady = (scoped) => {
+          const changed = refreshHostServices(scoped)
+          // 顺序不能反：先补注册右栏 definition 与 body/title、补挂左栏全局页，
+          // 再重挂头部 —— 头部渲染时按宿主注册表的真实内容决定是否可用（见 rightTabIssue）。
+          mountRightDefinition()
+          mountRightPane()
+          mountGlobalEntries()
+          if (changed) note('host-services-ready', '收到宿主导航服务，补挂右栏与头部入口')
+          if (headerCleanup) {
+            if (headerRemount) {
+              try { headerRemount() } catch {}
+            }
+          } else {
+            // apply 时服务全缺，头部当时根本没注册 —— 这里补挂。
+            mountHeaderEntry()
+          }
+        }
         if (typeof ctx.inject === 'function') {
-          try {
-            ctx.inject(['sidebarRight', 'sidebarRightTabs', 'sessions'], (scoped) => {
-              const host = scoped && typeof scoped.get === 'function' ? scoped : ctx
-              const nextRight = optionalHostService(host, 'sidebarRight')
-              const nextTabs = optionalHostService(host, 'sidebarRightTabs')
-              const nextSessions = optionalHostService(host, 'sessions')
-              const nextLayout = optionalHostService(host, 'layout')
-              const changed = nextRight !== hostSidebarRight || nextTabs !== hostSidebarRightTabs
-                || nextSessions !== hostSessions || nextLayout !== hostLayout
-              hostSidebarRight = nextRight
-              hostSidebarRightTabs = nextTabs
-              hostSessions = nextSessions
-              if (nextLayout) hostLayout = nextLayout
-              if (!changed) return
-              note('host-services-ready', '收到 sidebarRight/sessions 服务，重挂头部与右栏入口')
-              if (headerCleanup && headerRemount) {
-                try { headerRemount() } catch {}
-              } else {
-                // apply 时服务全缺，头部当时根本没注册 —— 这里补挂。
-                mountHeaderEntry()
-              }
-            })
-          } catch (error) {
-            note('host-services-inject-fail', String((error && error.message) || error))
+          for (const deps of [['sidebarRightTabs'], ['sidebarRight'], ['layout']]) {
+            try {
+              ctx.inject(deps, onHostServicesReady)
+            } catch (error) {
+              note('host-services-inject-fail', String((error && error.message) || error))
+            }
           }
         }
 
