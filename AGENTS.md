@@ -77,6 +77,7 @@ UI 模组采用**选择性官方强复刻**：只对齐会话级需要的 Ticket
 | 9 | 新增一个 `useState` 后一批用例同时红 | 面板 hook 队列按**位置**取值：只能在**末尾追加**，并同步 `deskQueue` / 预览 `deskHooks` | 0.9.157 |
 | 10 | `git push --tags` 整批被拒（`already exists`） | 只推新建的那几个：`git push origin v0.9.x`；历史遗留同名 tag 会挡住整批 | 0.9.168 |
 | 11 | 索引写「共 158 篇」，实际 176 篇没人发现 | 文档里的**总数**要与实际条目一致；`check-docs` 现在会拦 | 0.9.169 |
+| 12 | 代码合进 `main` 了，客户装包却是**老 UI**、也没有新入口 | **tag / GitHub Release / npm / 文档四件事必须同批做完**。只推 tag 不建 Release，仓库右栏「Releases」还挂着上一版为 Latest；只建 Release 不发 npm，`dsh plugin add` 永远装到旧版本 | 2.0.0 |
 
 ---
 
@@ -140,7 +141,14 @@ node scripts/render-preview.mjs preview.html
 
 ## 九、发布
 
-`UPDATING.md` 是唯一流程：五处版本 + CHANGELOG + tag + `release-gh.mjs --latest` + npm；发布前 `preflight` 全绿。
+`UPDATING.md` 是唯一流程；发布前 `preflight` 全绿。**四件事同批做完，缺一不可**：
+
+1. **五处版本一致** + CHANGELOG 有该版本小节；
+2. **git tag**（`v<version>`）推上去；
+3. **GitHub Release**：`node scripts/release-gh.mjs --latest`（标题只写版本号）。只推 tag 不建 Release，仓库「Releases」栏会继续把上一版标成 Latest；
+4. **npm publish**：不发这一条，`dsh plugin add dsh-session-superagent` 永远装到旧版本 —— 客户看到的就是老 UI。
+
+判据：发布后 `gh api repos/MYCF711/dsh-session-superagent/releases/latest` 的 `tag_name` 与 `npm view dsh-session-superagent version` 必须都等于刚发的版本。
 
 ## 十、当前基线
 
