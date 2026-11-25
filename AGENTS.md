@@ -147,6 +147,19 @@ node scripts/render-preview.mjs preview.html
 2. **git tag**（`v<version>`）推上去；
 3. **GitHub Release**：`node scripts/release-gh.mjs --latest`（标题只写版本号）。只推 tag 不建 Release，仓库「Releases」栏会继续把上一版标成 Latest；
 4. **npm publish**：不发这一条，`dsh plugin add dsh-session-superagent` 永远装到旧版本 —— 客户看到的就是老 UI。
+   - 令牌在 `D:\MyKey
+pm
+pm_token.txt`，**只经 shell 变量注入临时 npmrc**，不 echo、不复制、不写进仓库：
+     ```sh
+     tmpd=$(mktemp -d); export NPM_TOKEN="$(tr -d '
+' < 'D:/MyKey/npm/npm_token.txt')"
+     printf '//registry.npmjs.org/:_authToken=%s
+' "$NPM_TOKEN" > "$tmpd/npmrc"
+     npm publish --access public --userconfig "$tmpd/npmrc"; rm -rf "$tmpd"
+     ```
+   - `npm publish` 会跑 `prepublishOnly` → `preflight --fast`，**先把它跑绿**（常见红项：profile 断链 → `sync-profile.mjs --repair`；改了运行时代码却没 bump → 必须出新版本号）。
+   - npm 侧是异步处理：命令返回 `+ pkg@x.y.z` 不代表已可用，**判据是 `registry.npmjs.org/<pkg>/<version>` 返回 200 且 `dist-tags.latest` 等于该版本**，通常需等 1–3 分钟。
+   - 2FA 账号首次会走 staged publish（`409 Cannot publish over previously staged version`），用上面的令牌重发即可完成，不需要 OTP。
 
 判据：发布后 `gh api repos/MYCF711/dsh-session-superagent/releases/latest` 的 `tag_name` 与 `npm view dsh-session-superagent version` 必须都等于刚发的版本。
 
