@@ -131,8 +131,15 @@ function loadClient(options = {}) {
   }
 
   const slotRegistrations = []
+  const services = {
+    layout: { selectPanel() {} },
+    sidebarRight: { openTab() {} },
+    sidebarRightTabs: { register() { return () => {} } },
+    sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: { s1: { title: '当前项目会话' } } }) }, refresh: async () => {} },
+  }
   const ctx = {
     effect: (fn) => fn(),
+    get: (name) => services[name],
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) {
@@ -171,9 +178,9 @@ function loadClient(options = {}) {
     removals,
     effects,
     stateCalls,
-    desk: slotRegistrations.find((entry) => entry.opts.id === 'session-superagent-desk'),
+    desk: slotRegistrations.find((entry) => entry.opts.name === 'main' && entry.opts.key === 'session-superagent'),
     renderDesk(queue, props = {}) {
-      const registration = slotRegistrations.find((entry) => entry.opts.id === 'session-superagent-desk')
+      const registration = slotRegistrations.find((entry) => entry.opts.name === 'main' && entry.opts.key === 'session-superagent')
       return render(registration.Component, props, queue)
     },
     renderInfoTip(props, queue = []) {
@@ -320,7 +327,9 @@ test('主面板 scroll-close：capture scroll 函数式递增 key，effect 清�
 test('fallback：require 缺失或仅缺 Tooltip 时，原 trigger 文案、warn、click/blur 与本地 bubble 完整保留', () => {
   for (const primitives of [undefined, HOST_WITHOUT_TOOLTIP]) {
     const client = loadClient({ primitives })
-    assert.equal(client.registrations.length, 2)
+    assert.ok(client.desk, '必须注册 main#session-superagent')
+    assert.ok(client.registrations.some((item) => item.opts.id === 'session-superagent-orbit'), '必须保留 composer dock')
+    assert.equal(client.registrations.some((item) => item.opts.name === 'conversation.view'), false, '旧中栏必须缺席')
     const text = '原样保留的说明'
     const first = client.renderInfoTip({ text, icon: 'alert', warn: true })
     assert.equal(first.nodes.filter((node) => node.type === HOST.Tooltip).length, 0)

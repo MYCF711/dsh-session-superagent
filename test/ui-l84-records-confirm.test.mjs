@@ -95,7 +95,7 @@ function response(body, ok = true, status = 200) {
 }
 
 function deskOf(client) {
-  return client.registrations.find((item) => item.opts.id === 'session-superagent-desk')
+  return client.registrations.find((item) => item.opts.name === 'main' && item.opts.key === 'session-superagent')
 }
 
 function orbitOf(client) {

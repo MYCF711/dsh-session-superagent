@@ -161,8 +161,15 @@ function loadClient(options = {}) {
   }
 
   const registrations = []
+  const services = {
+    layout: { selectPanel() {} },
+    sidebarRight: { openTab() {} },
+    sidebarRightTabs: { register() { return () => {} } },
+    sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: { s1: { title: '当前项目会话' } } }) }, refresh: async () => {} },
+  }
   const ctx = {
     effect: (fn) => fn(),
+    get: (name) => services[name],
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) {
@@ -233,12 +240,15 @@ function updateQueue() {
   return queue
 }
 
-function deskOf(client) {
-  return client.registrations.find((item) => item.opts.id === 'session-superagent-desk')
+function deskOf(client, props = {}) {
+  if (props.sessionId) {
+    return client.registrations.find((item) => item.opts.name === 'sidebar.right.pane.tab' && item.opts.key === 'dsh-session-superagent/session')
+  }
+  return client.registrations.find((item) => item.opts.name === 'main' && item.opts.key === 'session-superagent')
 }
 
 function nodesOf(client, queue, props = {}) {
-  return walk(client.render(deskOf(client), queue, props))
+  return walk(client.render(deskOf(client, props), queue, props))
 }
 
 function nodeText(node) {
@@ -1717,8 +1727,8 @@ test('Pill 回退：缺导出或整个 primitives 时交互保留 button.dt-pill
   }
 })
 
-test('Pill 真实 9 调用点：徽章/问题/暂停/跳过过滤委托官方，active 与 aria-pressed 同步且再点取消', () => {
-  assert.equal([...SOURCE.matchAll(/h\(Pill,/g)].length, 9, '共享适配不得增删 9 个业务调用点')
+test('Pill 真实 10 调用点：徽章/问题/暂停/跳过/模块化筛选委托官方，active 与 aria-pressed 同步且再点取消', () => {
+  assert.equal([...SOURCE.matchAll(/h\(Pill,/g)].length, 10, '共享适配不得增删 10 个业务调用点')
   const client = loadClient({ primitives: HOST })
   const state = pillState()
   const base = deskQueue(state)

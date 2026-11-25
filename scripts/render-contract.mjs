@@ -13,7 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const manifest = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'contract-stability.json'), 'utf8'))
 const target = join(root, 'docs', 'json-契约.md')
 
-const LEVEL = { stable: '稳定', experimental: '实验' }
+const LEVEL = { stable: '稳定', experimental: '实验', optional: '可选' }
 
 function render() {
   const lines = []
@@ -21,7 +21,7 @@ function render() {
   lines.push('')
   lines.push('所有工具都支持 `format: \'json\'`，返回带 `schemaVersion` 的对象（当前 `1`）。')
   lines.push('')
-  lines.push('**稳定性**：`稳定` = 不会无故改名或删除；`实验` = 可能变化，请容忍缺失。')
+  lines.push('**稳定性**：`稳定` = 不会无故改名或删除；`实验` = 可能变化，请容忍缺失；`可选` = 只在特定状态出现，出现时名称固定。')
   lines.push('')
   for (const [tool, groups] of Object.entries(manifest)) {
     if (tool.startsWith('_')) continue

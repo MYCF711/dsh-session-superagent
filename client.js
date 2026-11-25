@@ -1,10 +1,10 @@
 /**
  * dsh-session-superagent — browser half.
  *
- * Registers one list entry into `conversation.view` (the centre-column view
- * ring: chat / trajectory / waterfall live there), so the panel appears as a
- * tab beside them. It reads the read-only host route the server half
- * registers; no credential ever crosses this boundary.
+ * Registers the global workspace into `main` / `sidebar.panellist`, and the
+ * current-session workspace into the official right-sidebar slots. It reads
+ * the read-only host route the server half registers; no credential ever
+ * crosses this boundary.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-session-superagent',
@@ -12,6 +12,9 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState } = React
+
+    // 服务端只传状态名；人话统一在客户端翻译，弹层与主面板共用。
+    const POLL_STALE_TEXT = { 'boot-miss': '重启后没跑起来', stalled: '轮询停了' }
 
     // Issue #35：本地回退 Modal 的 portal 通道。composer dock 的祖先可能带 transform / contain，
     // 那会让 position:fixed 以该祖先为包含块并被 overflow 裁掉 —— 确认层 footer 既看不见也点不到。
@@ -373,6 +376,7 @@ window.__ModuleLoader__.load({
     let hostPill = null
     let hostCollapsibleRow = null
     let hostTooltip = null
+    let hostTooltipPrimitive = null
     let hostOrbit = null
     let hostOrbitRow = null
     try {
@@ -394,6 +398,8 @@ window.__ModuleLoader__.load({
       hostPill = primitives.Pill || null
       // 仅供 CollapsibleList：WatcherForm 高级区需要 bodyId/aria-controls，必须继续走本地 DisclosureRow。
       hostCollapsibleRow = primitives.DisclosureRow || null
+      // 头部入口直接复用官方 Tooltip 包装 Button；InfoTip 适配器只服务它自己的问号 trigger。
+      hostTooltipPrimitive = primitives.Tooltip || null
       if (primitives && primitives.Modal && primitives.Toast && primitives.IconWarningOutlineMedium) {
         hostUi = createHostUi({ React, primitives })
         // Tooltip 独立探测：缺少它只回退 InfoTip，不把已接入的 Modal/Toast 一起降级。
@@ -411,6 +417,7 @@ window.__ModuleLoader__.load({
       hostPill = null
       hostCollapsibleRow = null
       hostTooltip = null
+      hostTooltipPrimitive = null
     }
 
     // Orbit 独立探测：容器用官方 MenuSurface，watcher 行用官方 DisclosureRow。
@@ -433,7 +440,48 @@ window.__ModuleLoader__.load({
     }
 
     // 客户端版本探针：每次模块加载写一次，用来确认浏览器里跑的是哪一版
-    const CLIENT_VERSION = '1.0.0'
+    const CLIENT_VERSION = '2.0.0'
+
+    // 会话级导航使用官方 root/session slot。服务是可选的：老宿主没有它们时，
+    // 全局页仍可用，头部入口明确禁用，Dock 保留旧操作列表；不能用猜来的路由代替真实服务。
+    const GLOBAL_PANEL_ID = 'session-superagent'
+    const RIGHT_TAB_ID = 'dsh-session-superagent/session'
+    const RIGHT_TAB_KIND = 'sessionSuperagent'
+    const RIGHT_TAB_UNAVAILABLE = '宿主 sidebarRight.openTab 服务不存在'
+    const RIGHT_TAB_DEFINITION_UNAVAILABLE = '宿主 sidebarRightTabs.register 服务不存在'
+    const HEADER_UTILITY_ID = 'session-superagent-current'
+    let hostLayout = null
+    let hostSidebarRight = null
+    let hostSidebarRightTabs = null
+    let hostSessions = null
+
+    function canToggleSessionRightTab() {
+      return Boolean(hostSidebarRight
+        && hostSidebarRight.view && typeof hostSidebarRight.view.subscribe === 'function'
+        && typeof hostSidebarRight.tabsIn === 'function' && typeof hostSidebarRight.hide === 'function')
+    }
+    function visibleSessionRightTab(sessionId) {
+      if (!canToggleSessionRightTab()) return null
+      const tabs = hostSidebarRight.tabsIn(sessionId) || []
+      return tabs.find((tab) => tab && tab.kind === RIGHT_TAB_KIND && tab.visible !== false) || null
+    }
+
+    function optionalHostService(ctx, name) {
+      try {
+        const service = typeof ctx.get === 'function' ? ctx.get(name) : ctx[name]
+        return service || null
+      } catch {
+        return null
+      }
+    }
+
+    function openSessionSuperagentTab() {
+      if (!hostSidebarRight || typeof hostSidebarRight.openTab !== 'function') {
+        throw new Error(RIGHT_TAB_UNAVAILABLE)
+      }
+      // 右栏 session slot 自带当前 sessionId；调用方只传 kind，不拼 sidebar:// 地址或伪造 params。
+      return hostSidebarRight.openTab(RIGHT_TAB_KIND)
+    }
     // SEMVER_COMPARATOR_SOURCE_START
     // This block is duplicated verbatim in client.js because the browser UMD cannot import ESM.
     // test/update-semver.test.mjs audits both copies and exercises their behavior.
@@ -494,15 +542,11 @@ window.__ModuleLoader__.load({
       return parseSemver(value) !== null
     }
     // SEMVER_COMPARATOR_SOURCE_END
-    // ── 页签名称（`conversation.view` 的 label）────────────────────────────────
-    // 宿主只在 register()/dispose() 时重算页签文案：ui-conversation 的 viewTabs() 每次刷新都读
-    // `resolveSlotLabel(entry.options.label)`，而刷新由 `slots.subscribe('conversation.view')` 驱动
-    // （register/dispose → markDirty → 微任务 flush）。所以原地改 `options.label` 不会重画 ——
-    // 改名必须「先 dispose、再按同 id/order/component 重注册」，保证列表里始终只有一条。
-    //
+    // ── 入口名称（左侧全局中枢 / 会话右栏标题）───────────────────────────────
     // 名称只有一份品牌语义（issue #11 的 brandName，`/state` 下发），这里不另造字段：
     //   本地显示覆盖（本浏览器 localStorage）> /state.brandName > 默认「主理鱼」。
-    // 覆盖只改这一个页签，不动面板标题、唤醒抬头、插件包名和 ack 标签。
+    // 左栏、右栏 definition 与右栏标题在改名时先 dispose 再按原 id/key/component 重注册，
+    // 让宿主立刻重算文案；覆盖不动唤醒抬头、插件包名和 ack 标签。
     const TAB_NAME_DEFAULT = '主理鱼'
     const TAB_NAME_STORAGE_KEY = 'dsh-session-superagent.tab-name'
     // 页签条不允许无限长：超过 24 个码点就截断。按码点切（Array.from）而不是 UTF-16 单元，
@@ -760,7 +804,7 @@ window.__ModuleLoader__.load({
     // 官方 GUI 的 376 条选择器 / 40KB 样式原样搬过来，类名统一 `dt-` 前缀，不污染宿主。
     // 两个表单都有这个开关：文案只写一份，改的时候不会漏掉另一处
     const ISOLATED_HINT = '隔离执行（每次唤醒开一个临时副本；在副本里改，用完自动回收）'
-    const PORTED_CSS = "/* Panel layout and local UI controls styled with DSH `--dsw-alias-*` design tokens; one rule per line. */\n.dt-page { box-sizing: border-box; height: 100%; overflow: auto; scrollbar-gutter: stable; scroll-padding: 48px 0 72px; container-type: inline-size; padding: 28px clamp(24px, 4vw, 48px) 0; color: var(--dsw-alias-label-primary); }\n/* Deployment page rendered inside DSH Plugin Manager, which owns scrolling and padding. */\n.dt-embedded { container-type: inline-size; color: var(--dsw-alias-label-primary); }\n/* Disable sticky positioning inside DSH Plugin Manager, where the host container owns scrolling and bottom padding. */\n.dt-embedded .dt-savebar { position: static; }\n.dt-page > * + *, .dt-tabpanel > * + * { margin-top: 16px; }\n.dt-page > .dt-column { max-width: 960px; margin: 0 auto; padding-bottom: 48px; display: flex; flex-direction: column; gap: 24px; }\n.dt-head { position: relative; z-index: 3; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }\n.dt-search { position: relative; width: 240px; max-width: 100%; }\n.dt-search-results { position: absolute; top: calc(100% + 6px); right: 0; width: min(560px, 90cqw); max-height: 60vh; overflow: auto; padding: 8px 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); box-shadow: var(--dsw-elevation-prominent); z-index: 5; display: flex; flex-direction: column; gap: 8px; }\n.dt-mark { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 25%, transparent); color: inherit; border-radius: 2px; }\n[data-platform='darwin'] .dt-page .dt-head { padding-top: var(--dsh-frame-top-clearance, 0px); }\n.dt-title { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; color: var(--dsw-alias-label-secondary); }\n.dt-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }\n.dt-page .dt-tabs { overflow-x: auto; display: flex; gap: 20px; max-width: none; padding: 0; border-radius: 0; background: none; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-segmented { width: 100%; max-width: 420px; box-sizing: border-box; display: inline-grid; gap: 2px; padding: 3px; border-radius: 9px; background: var(--dsw-alias-interactive-bg-hover); }\n.dt-ticket-body .dt-form { position: relative; z-index: 1; }\n.dt-form.dt-block { padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; gap: 16px; }\n.dt-block-title { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }\n.dt-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }\n.dt-section-title { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; line-height: 22px; font-weight: 600; color: var(--dsw-alias-label-primary); }\n.dt-section-name { white-space: nowrap; }\n.dt-count { font-size: 14px; color: var(--dsw-alias-label-caption); font-variant-numeric: tabular-nums; font-weight: 400; } .dt-section-sub { font-size: 12px; line-height: 18px; font-weight: 400; color: var(--dsw-alias-label-caption); }\n.dt-hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }\n.dt-error { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-error-primary); }\n.dt-banner { margin: 0; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 20px; background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 10%, transparent); overflow-wrap: anywhere; }\n.dt-banner.dt-danger { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: var(--dsw-alias-state-error-primary); }\n.dt-list { list-style: none; margin: 0 -8px; padding: 0; display: flex; flex-direction: column; gap: 2px; }\n.dt-row { position: relative; min-width: 0; border-radius: 12px; padding: 10px 8px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: flex-start; }\n.dt-row.dt-link:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-row-main { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }\n.dt-disclosure-body .dt-row-main { flex-basis: 0; }\n.dt-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; line-height: 20px; font-weight: 500; }\n.dt-open { max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 20px; font-weight: 500; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-open::after { content: ''; position: absolute; inset: 0; border-radius: 12px; }\n.dt-open:focus-visible { outline: none; }\n.dt-open-wrap { white-space: normal; }\n.dt-open:focus-visible::after { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-row-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-caption); overflow-wrap: anywhere; }\n.dt-row-quote { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }\n/* Transparent block borders preserve vertical spacing when line clamping clips padding. */\n.dt-banner:is(.dt-clamp, .dt-clamp-8) { padding-block: 0; border-block: 8px solid transparent; }\n.dt-banner-label { font-weight: 500; }\n.dt-banner .dt-md { display: inline; }\n.dt-banner .dt-md > p:first-child { display: inline; }\n.dt-row-buttons { position: relative; z-index: 1; gap: 8px; margin-top: 4px; }\n.dt-row-actions { position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; font-size: 13px; line-height: 20px; }\n.dt-dot { flex: none; margin-top: 5px; }\n.dt-inline-link { position: relative; z-index: 1; color: var(--dsw-alias-link); text-decoration: none; }\n.dt-inline-link:hover { text-decoration: underline; }\n.dt-textlink { padding: 0; border: 0; background: none; font: inherit; color: var(--dsw-alias-link); cursor: pointer; text-align: left; }\n.dt-textlink:hover { text-decoration: underline; }\n.dt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; line-height: 20px; }\n.dt-kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 13px; line-height: 20px; }\n.dt-kv dt { color: var(--dsw-alias-label-tertiary); }\n.dt-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }\n@container (max-width: 640px) { .dt-kv dt { margin-top: 4px; } .dt-kv dt:first-of-type { margin-top: 0; } }\n.dt-timeline-day { position: sticky; top: 0; z-index: 1; padding: 6px 0 2px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); font-weight: 500; list-style: none; background: var(--dsw-alias-bg-base); }\n.dt-event-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }\n.dt-event-head .dt-event-time { margin-left: auto; flex: none; font-size: 12px; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }\n.dt-event-nums { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }\n.dt-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }\n.dt-event { padding: 12px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l2); display: flex; flex-direction: column; gap: 6px; min-width: 0; }\n.dt-event:last-child { border-bottom: 0; }\n.dt-event.dt-highlight { background: var(--dsw-alias-interactive-bg-hover); border-radius: 8px; padding-inline: 8px; margin-inline: -8px; }\n.dt-event-text { margin: 0; font-size: 13px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }\n.dt-event-actor { font-weight: 500; color: var(--dsw-alias-label-secondary); }\n.dt-event-quiet .dt-event-text { color: var(--dsw-alias-label-tertiary); }\n.dt-flow { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }\n.dt-clamp-8 { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }\n.dt-more { align-self: flex-start; font-size: 12px; }\n.dt-reveal { opacity: 0; }\n.dt-event:hover .dt-reveal, .dt-reveal:focus-visible { opacity: 1; }\n@media (hover: none) {\n  .dt-reveal { opacity: 1; }\n}\n.dt-event-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }\n.dt-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }\n.dt-filters .dt-search { margin-left: auto; }\n.dt-form { display: flex; flex-direction: column; gap: 24px; }\n.dt-fieldset { display: flex; flex-direction: column; gap: inherit; min-width: 0; margin: 0; padding: 0; border: 0; }\n.dt-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 20px; min-width: 0; }\n.dt-field small { color: var(--dsw-alias-label-caption); font-size: 12px; }\n.dt-textarea { box-sizing: border-box; width: 100%; min-width: 0; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 10px; padding: 8px 12px; font: inherit; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1, transparent); resize: vertical; }\n.dt-select { box-sizing: border-box; width: 100%; min-width: 0; height: 32px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; padding: 0 28px 0 8px; text-overflow: ellipsis; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1, transparent); }\n.dt-textarea:focus-visible, .dt-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-mono { font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 12px; overflow-wrap: anywhere; }\n.dt-detail { margin-top: 2px; color: var(--dsw-alias-label-secondary); }\n.dt-savebar .dt-error { white-space: pre-line; }\n.dt-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 36px; font-size: 13px; }\n.dt-subhead-actions { display: inline-flex; align-items: center; gap: 4px; }\n.dt-btn-busy .dt-btn-icon svg { animation: dt-spin 1s linear infinite; }\n.dt-subhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }\n.dt-rules, .dt-changes { list-style: none; margin: 0; padding: 0; }\n.dt-field-head { display: inline-flex; align-items: center; gap: 4px; color: var(--dsw-alias-label-secondary); }\n.dt-info { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; background: none; color: var(--dsw-alias-label-caption); cursor: help; }\n.dt-info:hover, .dt-info:focus-visible { color: var(--dsw-alias-label-secondary); }\n.dt-info:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: 50%; }\n.dt-tooltip { position: fixed; z-index: 1100; width: max-content; max-width: min(320px, calc(100vw - 24px)); padding: 3px 7px; border-radius: 8px; background: var(--dsw-alias-tooltip-bg); color: var(--dsw-static-neutral-bluish-00); font-size: 13px; line-height: 20px; overflow-wrap: break-word; pointer-events: none; animation: dt-tooltip-in 150ms ease-in-out; }\n@keyframes dt-tooltip-in { from { opacity: 0; } }\n.dt-rules { border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-rule { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-rule > :first-child { flex: 1; min-width: 0; }\n.dt-rule-preview { flex: 1; min-width: 0; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--dsw-alias-label-caption); }\n.dt-rule-switch { margin-top: 2px; flex: none; }\n.dt-rule-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dsw-alias-label-caption); }\n.dt-rule-dot[data-enabled] { background: var(--dsw-alias-brand-primary); }\n.dt-rule-body { display: flex; flex-direction: column; gap: 12px; padding: 8px 0 8px 28px; }\n.dt-model { display: flex; flex-direction: column; gap: 6px; }\n.dt-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }\n.dt-changes { display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 20px; }\n.dt-changes li::before { content: '· '; color: var(--dsw-alias-label-caption); }\n.dt-main { display: flex; flex-direction: column; gap: 24px; min-width: 0; }\n.dt-modal.dt-glossary-modal { width: min(680px, 100%); }\n.dt-nav-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 32px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }\n.dt-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-nav-item[aria-current='true'] { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); font-weight: 500; }\n.dt-nav-item:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }\n.dt-changed-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-brand-primary); flex: none; }\n.dt-add-skill { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-prompt-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }\n.dt-editor { min-height: 360px; }\n.dt-inline-select { width: auto; }\n.dt-preview-part { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 2px 12px; border-left: 2px solid var(--dsw-alias-border-l3); }\n.dt-preview-head { font-size: 13px; line-height: 20px; display: flex; align-items: baseline; gap: 8px; }\ndiv.dt-preview-head { color: var(--dsw-alias-label-secondary); }\n.dt-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; min-width: 0; }\n.dt-card-head { display: flex; align-items: center; gap: 12px; min-height: 28px; }\n.dt-card-head .dt-row-main { flex: 1 1 0; min-width: 64px; }\n.dt-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }\n.dt-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }\n.dt-rows-item { display: grid; grid-template-columns: repeat(var(--dt-columns), minmax(0, 1fr)) auto; gap: 8px; align-items: center; }\n.dt-filter-gap { flex: 1; }\n.dt-page-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; width: 100%; }\n.dt-page-head > div:first-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }\n.dt-page-head .dt-toolbar { flex: 0 1 auto; margin-left: auto; }\n.dt-page-head > .dt-btn { margin-left: -10px; }\n.dt-page-title { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; width: 100%; }\n.dt-page-title h2 { margin: 0; flex: 1 1 auto; min-width: 0; font-size: 20px; line-height: 28px; font-weight: 500; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }\n.dt-status-line { margin-top: -16px; }\n.dt-plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 20px; }\n.dt-plain-list > li { position: relative; padding-left: 12px; }\n.dt-plain-list > li::before { content: ''; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px; border-radius: 1px; background: currentColor; opacity: 0.45; }\n.dt-details { display: flex; flex-direction: column; gap: 2px; border-top: 0.5px solid var(--dsw-alias-border-l2); padding-top: 8px; }\n.dt-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 16px; border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-danger-zone .dt-btn { color: var(--dsw-alias-state-error-primary); }\n.dt-md { display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }\n.dt-md p, .dt-md ul, .dt-md ol { margin: 0; }\n.dt-md ul, .dt-md ol { padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }\n.dt-md-heading { font-weight: 500; }\n.dt-code { font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 12px; padding: 0 4px; border-radius: 4px; background: var(--dsw-alias-bg-module-platform); }\n.dt-dot-wrap { display: inline-flex; flex: none; }\n.dt-search-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }\n.dt-ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }\n.dt-legend-title { margin: 16px 0 6px; font-size: 13px; color: var(--dsw-alias-label-tertiary); }\n.dt-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }\n.dt-legend li { display: flex; align-items: center; gap: 6px; }\n.dt-legend .dt-dot { margin-top: 0; }\n.dt-savebar { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 12px 0; background: var(--dsw-alias-bg-base, var(--dsw-alias-bg-layer-1)); border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-savebar .dt-hint { margin-right: auto; }\n.dt-card > .dt-savebar, .dt-block > .dt-savebar { margin: 0 -16px -16px; padding: 12px 16px; border-radius: 0 0 16px 16px; }\n.dt-glossary { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 20px; }\n.dt-glossary th, .dt-glossary td { text-align: left; padding: 6px 8px; border-bottom: 0.5px solid var(--dsw-alias-border-l2); vertical-align: top; }\n.dt-glossary th { color: var(--dsw-alias-label-tertiary); font-weight: 400; }\n.dt-glossary th.dt-glossary-group { color: var(--dsw-alias-label-secondary); font-weight: 600; padding-top: 14px; }\n.dt-glossary th:nth-child(-n+2), .dt-glossary td:nth-child(-n+2) { white-space: nowrap; }\n.dt-values { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 16px 0 0; font-size: 13px; }\n.dt-values dt { color: var(--dsw-alias-label-tertiary); }\n.dt-values dd { margin: 0; }\n.dt-pre { margin: 0; padding: 12px; border-radius: 10px; background: var(--dsw-alias-bg-module-platform); font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 12px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; }\n.dt-pre ins { background: color-mix(in srgb, var(--dsw-alias-state-success-primary, green) 18%, transparent); text-decoration: none; }\n.dt-pre del { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent); text-decoration: none; }\n.dt-prompt { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: start; }\n.dt-prompt-nav { display: flex; flex-direction: column; gap: 2px; }\n.dt-prompt-nav button { justify-content: flex-start; }\n.dt-disclosure-body { padding: 8px 0 8px 28px; display: flex; flex-direction: column; gap: 8px; }\n@container (max-width: 640px) {\n  .dt-tab { padding: 0 8px; font-size: 13px; }\n  .dt-segment { padding: 0 10px; }\n  .dt-head { align-items: center; }\n  .dt-search-results { right: auto; left: 0; width: 100%; }\n  .dt-page-title h2 { font-size: 17px; line-height: 24px; }\n  .dt-status-line { margin-top: -12px; }\n  .dt-page .dt-tabs { display: flex; flex-wrap: nowrap; scrollbar-width: thin; }\n  .dt-page .dt-tab { flex: none; }\n  .dt-page .dt-tabs[data-more='end'] { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }\n  .dt-page .dt-tabs[data-more='start'] { mask-image: linear-gradient(to right, transparent, #000 40px); }\n  .dt-page .dt-tabs[data-more='both'] { mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); }\n  .dt-kv { grid-template-columns: 1fr; gap: 6px; }\n  .dt-grid3, .dt-prompt { grid-template-columns: 1fr; }\n  .dt-search { width: 100%; }\n  .dt-filters .dt-search { margin-left: 0; }\n}\n/* Local UI primitive styles (see controls.tsx). */\n.dt-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: none; border-radius: 18px; cursor: pointer; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); background: transparent; padding: 0 14px; white-space: nowrap; }\n.dt-btn:disabled { cursor: not-allowed; opacity: 0.4; }\n.dt-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-btn-md { height: 36px; }\n.dt-btn-sm { height: 28px; font-size: 12px; line-height: 18px; padding: 0 10px; border-radius: 14px; }\n/* 主按钮：深色下 label-primary-foreground（深色）压绿底只有 4.09 —— 深色主题里前景该是浅的。 */\n/* 往白色混 70%：浅色下仍是浅字（4.5+），深色下变浅（>4.5），两边都过。 */\n.dt-btn-primary { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-static-neutral-bluish-00); }\n.dt-btn-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }\n.dt-btn-ghost { background: transparent; border: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); }\n.dt-btn-ghost:hover:not(:disabled), .dt-btn-outline:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-btn-ghost:active:not(:disabled) { background: var(--dsw-alias-interactive-bg-active); }\n.dt-btn-outline { border: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-btn-icon { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; }\n.dt-tag { display: inline-flex; align-items: center; border-radius: 999px; padding: 1px 8px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; }\n.dt-tag[data-tone='outline'] { border: 0.5px solid var(--dsw-alias-border-l4); color: var(--dsw-alias-label-tertiary); }\n.dt-tag[data-tone='neutral'] { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); }\n.dt-tag[data-tone='quiet'] { color: var(--dsw-alias-label-secondary); }\n.dt-tag[data-tone='success'] { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 72%, var(--dsw-alias-label-primary)); }\n.dt-tag[data-tone='info'] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); color: var(--dsw-alias-state-business-primary); }\n/* 胶囊是「暂停/退避/判断」唯一的状态色：文字与 12% 同色底叠起来，浅色下警告只有 4.17。 */\n/* 往 label-primary 混 28%：浅色变深、深色变浅，两档都留出余量。 */\n.dt-tag[data-tone='warning'] { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent); color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 72%, var(--dsw-alias-label-primary)); }\n.dt-tag[data-tone='danger'] { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 76%, var(--dsw-alias-label-primary)); }\n.dt-pill { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: none; border-radius: 12px; font: inherit; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; }\n.dt-pill:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-pill-active, .dt-pill-active:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-button-ghost-active-fill); box-shadow: inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border); }\n.dt-tabs { display: grid; padding: 4px; border-radius: 12px; background: var(--dsw-alias-bg-module-platform); }\n.dt-tab { box-sizing: border-box; height: 34px; padding: 0 12px; border: 0.5px solid transparent; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 14px; line-height: 20px; white-space: nowrap; cursor: pointer; transition: color 180ms ease, background 180ms ease; }\n.dt-tab:hover { color: var(--dsw-alias-label-primary); }\n.dt-tab[aria-selected='true'] { color: var(--dsw-alias-label-primary); font-weight: 600; background: var(--dsw-alias-bg-layer-3); border-color: var(--dsw-alias-border-l3); }\n.dt-tab:focus-visible { outline: none; text-decoration: underline; text-underline-offset: 4px; }\n.dt-segment { height: 28px; padding: 0 16px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: color 120ms ease, background 160ms ease; }\n.dt-segment:hover:not(:disabled), .dt-segment[aria-selected='true'] { color: var(--dsw-alias-label-primary); }\n.dt-segment[aria-selected='true'] { background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-elevation-soft); }\n.dt-segment:disabled { cursor: default; opacity: 0.4; }\n.dt-segment:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }\n.dt-input { box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; height: 32px; min-width: 0; padding: 0 8px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); }\n.dt-input:focus-within { border-color: var(--dsw-alias-brand-primary); }\n.dt-input-icon { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; color: var(--dsw-alias-label-tertiary); }\n.dt-input input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); }\n.dt-input input/* 占位符：label-dimmed 在浅色下只有 2.17（深色 3.81），必须能读出来才叫占位符。 */\n/* 往 label-tertiary 混 60%：浅色变深、深色变浅，两档都过 4.5。 */\n::placeholder { color: color-mix(in srgb, var(--dsw-alias-label-dimmed) 40%, var(--dsw-alias-label-tertiary)); }\n.dt-input input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }\n.dt-field .dt-input, .dt-search .dt-input, .dt-add-skill .dt-input { display: flex; width: 100%; }\n.dt-switch { box-sizing: border-box; flex: 0 0 auto; width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 10px; background: var(--dsw-alias-border-l3); cursor: pointer; }\n.dt-switch[aria-checked='true'] { background: var(--dsw-alias-brand-primary); }\n.dt-switch:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-switch-thumb { display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--dsw-alias-label-primary-foreground); transition: transform 120ms ease; }\n.dt-switch[aria-checked='true'] .dt-switch-thumb { transform: translateX(16px); }\n.dt-state-dot { position: relative; display: inline-block; flex: none; width: 10px; height: 10px; color: var(--dsw-alias-state-idle-primary); }\n.dt-state-dot::after { content: ''; position: absolute; inset: 20%; border-radius: 50%; background: currentColor; }\n.dt-state-dot[data-state='done'] { color: var(--dsw-alias-state-success-primary); }\n.dt-state-dot[data-state='warning'] { color: var(--dsw-alias-state-warn-primary); }\n.dt-state-dot[data-state='error'] { color: var(--dsw-alias-state-error-primary); }\n.dt-spinner { flex: none; color: var(--dsw-alias-label-tertiary); }\n.dt-spinner g { transform-origin: center; animation: dt-spin 1.5s linear infinite; }\n.dt-spinner circle { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }\n.dt-spinner circle:first-child { opacity: 0.25; }\n.dt-spinner circle:last-child { stroke-dasharray: 18 150; }\n@keyframes dt-spin { to { transform: rotate(360deg); } }\n.dt-disclosure-row { display: flex; align-items: center; gap: 4px; min-height: 28px; min-width: 0; border-radius: 8px; cursor: pointer; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }\n.dt-disclosure-row:hover { color: var(--dsw-alias-label-primary); }\n.dt-disclosure-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-disclosure-lead { position: relative; display: inline-flex; flex: none; width: 24px; height: 24px; align-items: center; justify-content: center; }\n.dt-disclosure-icon { display: inline-flex; align-items: center; justify-content: center; }\n.dt-disclosure-chevron { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; }\n.dt-disclosure-row:hover .dt-disclosure-icon, .dt-disclosure[data-open] .dt-disclosure-icon { visibility: hidden; }\n.dt-disclosure-row:hover .dt-disclosure-chevron, .dt-disclosure[data-open] .dt-disclosure-chevron { display: inline-flex; }\n.dt-disclosure-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-modal-root { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: max(24px, var(--dsh-frame-top-clearance, 24px)) 24px; }\n.dt-modal-mask { position: absolute; inset: 0; background: var(--dsw-alias-bg-mask-1); backdrop-filter: var(--dsw-mask-blur); }\n.dt-modal { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 20px; width: min(380px, 100%); max-height: 100%; padding: 0 0 24px; overflow-x: hidden; overflow-y: auto; border-radius: 24px; background: var(--dsw-alias-bg-layer-2); box-shadow: var(--dsw-elevation-prominent); color: var(--dsw-alias-label-primary); outline: none; }\n.dt-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 22px 14px 0 24px; }\n.dt-modal-header h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }\n.dt-modal-close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; cursor: pointer; color: var(--dsw-alias-label-secondary); }\n.dt-modal-close:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-modal-description { margin: -8px 0 0; padding: 0 24px; font-size: 14px; line-height: 22px; }\n.dt-modal-body { min-width: 0; min-height: 0; overflow: auto; padding: 0 24px; }\n.dt-modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 24px; }\n.dt-modal-header, .dt-modal-description, .dt-modal-footer { flex-shrink: 0; }\n.dt-toast { position: fixed; top: 40px; left: 50%; z-index: 1100; pointer-events: none; width: max-content; max-width: min(640px, calc(100vw - 48px)); padding: 12px 16px; border-radius: 14px; background: var(--dsw-alias-toast-bg); color: var(--dsw-static-neutral-bluish-00); font-size: 14px; line-height: 22px; box-shadow: var(--dsw-shadow-lv3); transform: translateX(-50%); animation: dt-toast-in 160ms ease-out, dt-toast-fade 1000ms ease var(--dt-toast-hold, 3000ms) forwards; }\n@keyframes dt-toast-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }\n@keyframes dt-toast-fade { to { opacity: 0; visibility: hidden; } }\n@media (prefers-reduced-motion: reduce) {\n  .dt-tab, .dt-segment, .dt-switch-thumb, .dt-spinner g, .dt-btn-busy .dt-btn-icon svg, .dt-tooltip { transition: none; animation: none; }\n  .dt-toast { animation: dt-toast-fade 1000ms ease var(--dt-toast-hold, 3000ms) forwards; }\n}\n.dt-page .dt-tab { height: 34px; padding: 0 2px; border: 0; border-radius: 0; color: var(--dsw-alias-label-tertiary); font-size: 14px; }\n.dt-page .dt-tab[aria-selected='true'] { background: none; color: var(--dsw-alias-label-primary); font-weight: 500; box-shadow: inset 0 -1.5px 0 var(--dsw-alias-label-primary); }\n.dt-status-head { display: flex; align-items: center; gap: 8px; }\n.dt-status-title { margin: 0; flex: 1; display: flex; align-items: center; gap: 4px; font-size: 15px; line-height: 22px; font-weight: 600; }\n.dt-status-text { margin-left: auto; flex: none; font-size: 12px; font-weight: 400; color: var(--dsw-alias-label-secondary); }\n.dt-status-line .dt-status-text { margin-left: 0; }\n.dt-status-text[data-state='warning'] { color: var(--dsw-alias-state-warn-primary); }\n.dt-status-text[data-state='error'] { color: var(--dsw-alias-state-error-primary); }\n.dt-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }\n.dt-lv { white-space: nowrap; }\n.dt-lv-label { color: var(--dsw-alias-label-caption); }\n.dt-lv-value { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }\n.dt-chip { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 6px; overflow: hidden; font-size: 11px; line-height: 18px; color: var(--dsw-alias-label-secondary); }\n.dt-chip-source { padding: 0 6px; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-module-platform); }\n.dt-chip-fact { padding: 0 6px; border-left: 0.5px solid var(--dsw-alias-border-l3); white-space: nowrap; }\n.dt-chip-label { margin-right: 4px; color: var(--dsw-alias-label-caption); }\n.dt-chip-link { position: relative; z-index: 1; text-decoration: none; cursor: pointer; transition: border-color 120ms ease; }\n.dt-chip-link:hover { border-color: var(--dsw-alias-brand-primary); }\n.dt-chip-link:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-chip-open { display: inline-flex; align-items: center; padding: 0 5px; border-left: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-brand-primary); }\n.dt-chip-problem, .dt-chip-problem .dt-chip-label { color: var(--dsw-alias-state-error-primary); }\n.dt-cards { gap: 8px; }\n.dt-att .dt-inline-link { font-size: 13px; font-weight: 500; }\n.dt-list > .dt-att { margin: 2px 8px; }\n.dt-att { padding: 10px 12px 10px 16px; border: 0; border-radius: 0; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-att::before { content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; border-radius: 1px; background: var(--dsw-alias-state-warn-primary); opacity: 0.7; }\n.dt-att-error::before { background: var(--dsw-alias-state-error-primary); }\n.dt-att-what { font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-state-warn-primary); }\n.dt-att-error .dt-att-what, .dt-att-error .dt-att-what .dt-open { color: var(--dsw-alias-state-error-primary); }\n.dt-stats { display: flex; flex-wrap: wrap; gap: 6px 24px; padding: 10px 14px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 12px; background: var(--dsw-alias-bg-module-platform); }\n.dt-stat { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-caption); }\n/* 可点的统计数字：去掉原生按钮外观，保留文字排版；选中时用浅底提示 */\n.dt-stat-btn { border: 0; background: none; padding: 2px 6px; margin: -2px -6px; border-radius: 8px; font: inherit; color: inherit; cursor: pointer; }\n.dt-stat-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }\n/* 浅色下 interactive-bg-hover 与白底只差 1.03：点了统计数字在按筛选，零视觉反馈。 */\n/* 换成品牌色 12% 底 + 0.5px 品牌色描边（两个主题都分得开）。 */\n.dt-stat-btn[aria-pressed='true'] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent); box-shadow: inset 0 0 0 0.5px var(--dsw-alias-brand-primary); }\n.dt-stat-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n/* 统计条单位：按钮上的 color:inherit 会把单位染成数字色，所以单位单独一档。 */\n/* 浅色下 caption（#818b98）在白底只有 3.14–3.45，深色下同一档 4.34–5.07。 */\n/* 往 label-primary 混 30%：浅色变深、深色变浅，两个主题的对比度同时变好（不用新 token）。 */\n/* 注意选择器**不带** .dt-stat-btn 前缀 —— 带前缀就只作用于可点的格子，不可点的仍是旧色（真机踩过）。 */\n.dt-stat-unit { color: color-mix(in srgb, var(--dsw-alias-label-caption) 70%, var(--dsw-alias-label-primary)); }\n/* 选中的统计格：品牌色 12% 底会把单位压到 4.20，再往主色多混 10% 拉回来。 */\n.dt-stat-btn[aria-pressed='true'] .dt-stat-unit { color: color-mix(in srgb, var(--dsw-alias-label-caption) 58%, var(--dsw-alias-label-primary)); }\n.dt-stat-value { font-size: 14px; font-weight: 500; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }\n.dt-more-link { font-size: 12px; font-weight: 400; }\n.dt-settings { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 24px; align-items: start; }\n.dt-settings-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; }\n.dt-settings-link { padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }\n.dt-settings-link:hover { color: var(--dsw-alias-label-primary); }\n.dt-settings-link[aria-current='page'] { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-primary); font-weight: 500; }\n.dt-settings-link[data-stage] + .dt-settings-link:not([data-stage]) { margin-top: 10px; }\n.dt-settings-body { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }\n.dt-settings-title { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }\n.dt-settings-body .dt-section-title { font-size: 15px; line-height: 22px; }\n.dt-subtabs { display: flex; gap: 16px; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-subtab { padding: 0 0 6px; border: 0; background: none; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 13px; cursor: pointer; }\n.dt-subtab[aria-selected='true'] { color: var(--dsw-alias-label-primary); font-weight: 500; box-shadow: inset 0 -1.5px 0 var(--dsw-alias-label-primary); }\n.dt-part { display: flex; flex-direction: column; gap: 12px; }\n.dt-rows-summary { text-align: left; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }\n.dt-table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 18px; }\n.dt-table th { text-align: left; font-weight: 400; color: var(--dsw-alias-label-caption); padding: 2px 8px 2px 0; }\n.dt-table td { padding: 4px 8px 4px 0; border-top: 0.5px solid var(--dsw-alias-border-l3); vertical-align: top; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }\n@container (max-width: 640px) {\n  .dt-settings { grid-template-columns: 1fr; gap: 12px; }\n  .dt-settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }\n  .dt-settings-link[data-stage] + .dt-settings-link:not([data-stage]) { margin-top: 0; }\n  .dt-page .dt-tabs { gap: 14px; }\n}\n.dt-list > .dt-ticket { display: grid; grid-template-columns: 112px minmax(0, 1fr); column-gap: 12px; align-items: start; margin: 0; padding: 12px 8px 12px 18px; border-radius: 0; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-list > .dt-ticket[data-state]::before { content: ''; position: absolute; left: 6px; top: 12px; bottom: 12px; width: 2px; border-radius: 1px; background: var(--dsw-alias-state-warn-primary); opacity: 0.7; }\n.dt-list > .dt-ticket[data-state='error']::before { background: var(--dsw-alias-state-error-primary); }\n.dt-ticket-stage { align-self: stretch; padding-top: 1px; border-right: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-ticket-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }\n.dt-ticket-body .dt-row-title .dt-open { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-ticket-meta { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }\n.dt-ticket-meta .dt-chip { flex: none; }\n.dt-ticket-meta .dt-ticket-actions { margin-top: 0; margin-left: auto; min-height: 0; flex-wrap: nowrap; }\n@container (max-width: 640px) { .dt-ticket-meta { flex-wrap: wrap; white-space: normal; } .dt-ticket-meta .dt-ticket-actions { flex-wrap: wrap; } }\n.dt-ticket-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dsw-alias-label-primary); }\n.dt-ticket-note-error { color: var(--dsw-alias-state-error-primary); }\n.dt-ticket-note-pause { font-weight: 500; color: var(--dsw-alias-state-warn-primary); }\n.dt-ticket-actions { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px; min-height: 30px; margin-top: 2px; }\n/* Pass pointer events through action containers to the row link, keeping only child controls interactive. */\n.dt-ticket-actions, .dt-row-buttons, .dt-row-actions { pointer-events: none; }\n.dt-ticket-actions > *, .dt-row-buttons > *, .dt-row-actions > * { pointer-events: auto; }\n.dt-line { min-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.dt-row-meta.dt-line { flex-wrap: nowrap; }\n.dt-line-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); }\n.dt-error-text { color: var(--dsw-alias-state-error-primary); }\n.dt-stage { display: inline-flex; align-items: flex-start; gap: 5px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-label-secondary); }\n.dt-stage svg { flex: none; margin-top: 2px; }\n.dt-stage[data-state='warning'] { color: var(--dsw-alias-state-warn-primary); }\n.dt-stage[data-state='error'] { color: var(--dsw-alias-state-error-primary); }\n.dt-stage[data-state='ongoing'] { color: var(--dsw-alias-state-business-primary); }\n.dt-icon-link { display: inline-flex; align-items: center; gap: 4px; }\na.dt-btn, a.dt-btn:hover { text-decoration: none; }\n.dt-section-icon { display: inline-flex; align-self: center; color: var(--dsw-alias-label-tertiary); }\n.dt-trigger-link { display: flex; flex-direction: column; gap: 2px; width: 100%; margin: -4px 0 -4px -8px; padding: 4px 8px; border: 0; border-radius: 8px; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }\n.dt-trigger-link:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-trigger-link:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-trigger-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }\n.dt-kv-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }\n.dt-banner-actions { margin-top: 6px; }\n@container (max-width: 640px) {\n  .dt-list > .dt-ticket { grid-template-columns: 1fr; row-gap: 4px; }\n  .dt-ticket-stage { border-right: 0; }\n}\n.dt-nav-group { margin: 10px 10px 2px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary); }\n.dt-nav-group:first-child { margin-top: 0; }\n.dt-prompt-nav .dt-nav-item { flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }\n.dt-nav-item > span { display: inline-flex; align-items: center; gap: 6px; }\n.dt-nav-item small { font-size: 12px; line-height: 18px; font-weight: 400; color: var(--dsw-alias-label-caption); }\n.dt-preview-part[data-editable] { border-left-color: var(--dsw-alias-brand-primary); }\n.dt-preview-head b { font-weight: 500; }\n.dt-preview-head > span { font-size: 12px; color: var(--dsw-alias-label-caption); }\n.dt-changed-tag { margin-left: 6px; padding: 0 5px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 4px; font-size: 11px; line-height: 16px; font-weight: 400; color: var(--dsw-alias-label-secondary); }\n.dt-updated-tag { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-primary); }\n.dt-default-updated { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 2px 12px; border-left: 2px solid var(--dsw-alias-state-warn-primary); }\n.dt-diff-fold { color: var(--dsw-alias-label-caption); font-style: italic; }\n.dt-compare { margin-left: auto; }\n.dt-admission th { white-space: nowrap; }\n.dt-admission thead tr:first-child th:not(:first-child) { color: var(--dsw-alias-label-secondary); font-weight: 500; }\n.dt-admission td { vertical-align: middle; }\n.dt-admission-scope { color: var(--dsw-alias-label-primary); font-size: 13px; }\n.dt-admission-scope small { display: block; font-size: 11px; color: var(--dsw-alias-label-caption); }\n.dt-admission-na { color: var(--dsw-alias-label-caption); }\n.dt-admission-cell { display: flex; align-items: center; gap: 4px; }\n.dt-admission-cell .dt-select { flex: 1; min-width: 0; }\n.dt-admission-slot { display: inline-flex; flex: none; width: 16px; }\n.dt-info-warn { color: var(--dsw-alias-state-warn-primary); }\n.dt-field-segmented { max-width: 240px; }\n/* 活跃时段：两个原生 time 选择器 + 全天按钮 */\n/* 表单控件不必满宽：短数字撑到 900px 只会显得空 */\n.dt-form > .dt-field > .dt-input { max-width: 480px; }\n.dt-error-card { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 35%, var(--dsw-alias-border-l3)); }\n.dt-error-card .dt-card-title { color: var(--dsw-alias-state-error-primary); }\n/* 空态引导：圆形步骤号 + 标题 + 说明，替代「① + 列表符号」的重复 */\n.dt-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; counter-reset: none; }\n.dt-step { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }\n.dt-step-num { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1; font-variant-numeric: tabular-nums; }\n.dt-step-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }\n.dt-step-title { font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dsw-alias-label-primary); }\n.dt-empty { display: flex; flex-direction: column; gap: 6px; padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 12px; }\n.dt-step-detail { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }\n.dt-hours { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }\n.dt-time { box-sizing: border-box; height: 32px; padding: 0 8px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }\n.dt-time:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-hours-sep { color: var(--dsw-alias-label-tertiary); }\n.dt-hours-hint { font-size: 12px; color: var(--dsw-alias-label-caption); }\n/* 分诊信号表（设置 → 诊断）：左列「名字 + 两个标签」成组，右列 `+N 分` 定宽贴右、数字等宽。只挂局部类，全局 .dt-row-title 一行没动 —— 别的列表还在用它。 */\n.dt-signal-title { display: grid; grid-template-columns: minmax(0, 1fr) 4.5em; align-items: baseline; column-gap: 12px; }\n.dt-signal-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }\n.dt-signal-meta { display: block; justify-self: stretch; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }\n/* 同一个维度（默认开/关）的两档要等权：`默认关` 原本是 49×19 的裸字，`默认开` 是 51×21 的描边胶囊。 */\n.dt-signal-lead .dt-tag[data-tone='quiet'] { border: 0.5px solid var(--dsw-alias-border-l4); }\n";
+    const PORTED_CSS = "/* Panel layout and local UI controls styled with DSH `--dsw-alias-*` design tokens; one rule per line. */\n.dt-page { box-sizing: border-box; height: 100%; overflow: auto; scrollbar-gutter: stable; scroll-padding: 48px 0 72px; container-type: inline-size; padding: 28px clamp(24px, 4vw, 48px) 0; color: var(--dsw-alias-label-primary); }\n/* Deployment page rendered inside DSH Plugin Manager, which owns scrolling and padding. */\n.dt-embedded { container-type: inline-size; color: var(--dsw-alias-label-primary); }\n/* Disable sticky positioning inside DSH Plugin Manager, where the host container owns scrolling and bottom padding. */\n.dt-embedded .dt-savebar { position: static; }\n.dt-page > * + *, .dt-tabpanel > * + * { margin-top: 16px; }\n.dt-page > .dt-column, .dt-tabpanel > .dt-column { max-width: 960px; margin: 0 auto; padding-bottom: 48px; display: flex; flex-direction: column; gap: 24px; }\n.dt-head { position: relative; z-index: 3; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }\n.dt-search { position: relative; width: 240px; max-width: 100%; }\n.dt-search-results { position: absolute; top: calc(100% + 6px); right: 0; width: min(560px, 90cqw); max-height: 60vh; overflow: auto; padding: 8px 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); box-shadow: var(--dsw-elevation-prominent); z-index: 5; display: flex; flex-direction: column; gap: 8px; }\n.dt-mark { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 25%, transparent); color: inherit; border-radius: 2px; }\n[data-platform='darwin'] .dt-page .dt-head { padding-top: var(--dsh-frame-top-clearance, 0px); }\n.dt-title { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; color: var(--dsw-alias-label-secondary); }\n.dt-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }\n.dt-page .dt-tabs { overflow-x: auto; display: flex; gap: 20px; max-width: none; padding: 0; border-radius: 0; background: none; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-segmented { width: 100%; max-width: 420px; box-sizing: border-box; display: inline-grid; gap: 2px; padding: 3px; border-radius: 9px; background: var(--dsw-alias-interactive-bg-hover); }\n.dt-ticket-body .dt-form { position: relative; z-index: 1; }\n.dt-form.dt-block { padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; gap: 16px; }\n.dt-block-title { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }\n.dt-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }\n.dt-section-title { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; line-height: 22px; font-weight: 600; color: var(--dsw-alias-label-primary); }\n.dt-section-name { white-space: nowrap; }\n.dt-count { font-size: 14px; color: var(--dsw-alias-label-caption); font-variant-numeric: tabular-nums; font-weight: 400; } .dt-section-sub { font-size: 12px; line-height: 18px; font-weight: 400; color: var(--dsw-alias-label-caption); }\n.dt-hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }\n.dt-error { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-error-primary); }\n.dt-banner { margin: 0; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 20px; background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 10%, transparent); overflow-wrap: anywhere; }\n.dt-banner.dt-danger { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: var(--dsw-alias-state-error-primary); }\n.dt-list { list-style: none; margin: 0 -8px; padding: 0; display: flex; flex-direction: column; gap: 2px; }\n.dt-row { position: relative; min-width: 0; border-radius: 12px; padding: 10px 8px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: flex-start; }\n.dt-row.dt-link:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-row-main { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }\n.dt-disclosure-body .dt-row-main { flex-basis: 0; }\n.dt-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; line-height: 20px; font-weight: 500; }\n.dt-open { max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 20px; font-weight: 500; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-open::after { content: ''; position: absolute; inset: 0; border-radius: 12px; }\n.dt-open:focus-visible { outline: none; }\n.dt-open-wrap { white-space: normal; }\n.dt-open:focus-visible::after { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-row-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-caption); overflow-wrap: anywhere; }\n.dt-row-quote { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }\n/* Transparent block borders preserve vertical spacing when line clamping clips padding. */\n.dt-banner:is(.dt-clamp, .dt-clamp-8) { padding-block: 0; border-block: 8px solid transparent; }\n.dt-banner-label { font-weight: 500; }\n.dt-banner .dt-md { display: inline; }\n.dt-banner .dt-md > p:first-child { display: inline; }\n.dt-row-buttons { position: relative; z-index: 1; gap: 8px; margin-top: 4px; }\n.dt-row-actions { position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; font-size: 13px; line-height: 20px; }\n.dt-dot { flex: none; margin-top: 5px; }\n.dt-inline-link { position: relative; z-index: 1; color: var(--dsw-alias-link); text-decoration: none; }\n.dt-inline-link:hover { text-decoration: underline; }\n.dt-textlink { padding: 0; border: 0; background: none; font: inherit; color: var(--dsw-alias-link); cursor: pointer; text-align: left; }\n.dt-textlink:hover { text-decoration: underline; }\n.dt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; line-height: 20px; }\n.dt-kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 13px; line-height: 20px; }\n.dt-kv dt { color: var(--dsw-alias-label-tertiary); }\n.dt-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }\n@container (max-width: 640px) { .dt-kv dt { margin-top: 4px; } .dt-kv dt:first-of-type { margin-top: 0; } }\n.dt-timeline-day { position: sticky; top: 0; z-index: 1; padding: 6px 0 2px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); font-weight: 500; list-style: none; background: var(--dsw-alias-bg-base); }\n.dt-event-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }\n.dt-event-head .dt-event-time { margin-left: auto; flex: none; font-size: 12px; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }\n.dt-event-nums { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }\n.dt-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }\n.dt-event { padding: 12px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l2); display: flex; flex-direction: column; gap: 6px; min-width: 0; }\n.dt-event:last-child { border-bottom: 0; }\n.dt-event.dt-highlight { background: var(--dsw-alias-interactive-bg-hover); border-radius: 8px; padding-inline: 8px; margin-inline: -8px; }\n.dt-event-text { margin: 0; font-size: 13px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }\n.dt-event-actor { font-weight: 500; color: var(--dsw-alias-label-secondary); }\n.dt-event-quiet .dt-event-text { color: var(--dsw-alias-label-tertiary); }\n.dt-flow { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }\n.dt-clamp-8 { display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; }\n.dt-more { align-self: flex-start; font-size: 12px; }\n.dt-reveal { opacity: 0; }\n.dt-event:hover .dt-reveal, .dt-reveal:focus-visible { opacity: 1; }\n@media (hover: none) {\n  .dt-reveal { opacity: 1; }\n}\n.dt-event-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }\n.dt-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }\n.dt-filters .dt-search { margin-left: auto; }\n.dt-form { display: flex; flex-direction: column; gap: 24px; }\n.dt-fieldset { display: flex; flex-direction: column; gap: inherit; min-width: 0; margin: 0; padding: 0; border: 0; }\n.dt-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 20px; min-width: 0; }\n.dt-field small { color: var(--dsw-alias-label-caption); font-size: 12px; }\n.dt-textarea { box-sizing: border-box; width: 100%; min-width: 0; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 10px; padding: 8px 12px; font: inherit; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1, transparent); resize: vertical; }\n.dt-select { box-sizing: border-box; width: 100%; min-width: 0; height: 32px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; padding: 0 28px 0 8px; text-overflow: ellipsis; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1, transparent); }\n.dt-textarea:focus-visible, .dt-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-mono { font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 12px; overflow-wrap: anywhere; }\n.dt-detail { margin-top: 2px; color: var(--dsw-alias-label-secondary); }\n.dt-savebar .dt-error { white-space: pre-line; }\n.dt-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 36px; font-size: 13px; }\n.dt-subhead-actions { display: inline-flex; align-items: center; gap: 4px; }\n.dt-btn-busy .dt-btn-icon svg { animation: dt-spin 1s linear infinite; }\n.dt-subhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }\n.dt-rules, .dt-changes { list-style: none; margin: 0; padding: 0; }\n.dt-field-head { display: inline-flex; align-items: center; gap: 4px; color: var(--dsw-alias-label-secondary); }\n.dt-info { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; background: none; color: var(--dsw-alias-label-caption); cursor: help; }\n.dt-info:hover, .dt-info:focus-visible { color: var(--dsw-alias-label-secondary); }\n.dt-info:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: 50%; }\n.dt-tooltip { position: fixed; z-index: 1100; width: max-content; max-width: min(320px, calc(100vw - 24px)); padding: 3px 7px; border-radius: 8px; background: var(--dsw-alias-tooltip-bg); color: var(--dsw-static-neutral-bluish-00); font-size: 13px; line-height: 20px; overflow-wrap: break-word; pointer-events: none; animation: dt-tooltip-in 150ms ease-in-out; }\n@keyframes dt-tooltip-in { from { opacity: 0; } }\n.dt-rules { border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-rule { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-rule > :first-child { flex: 1; min-width: 0; }\n.dt-rule-preview { flex: 1; min-width: 0; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--dsw-alias-label-caption); }\n.dt-rule-switch { margin-top: 2px; flex: none; }\n.dt-rule-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--dsw-alias-label-caption); }\n.dt-rule-dot[data-enabled] { background: var(--dsw-alias-brand-primary); }\n.dt-rule-body { display: flex; flex-direction: column; gap: 12px; padding: 8px 0 8px 28px; }\n.dt-model { display: flex; flex-direction: column; gap: 6px; }\n.dt-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }\n.dt-changes { display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 20px; }\n.dt-changes li::before { content: '· '; color: var(--dsw-alias-label-caption); }\n.dt-main { display: flex; flex-direction: column; gap: 24px; min-width: 0; }\n.dt-modal.dt-glossary-modal { width: min(680px, 100%); }\n.dt-nav-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 32px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }\n.dt-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-nav-item[aria-current='true'] { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); font-weight: 500; }\n.dt-nav-item:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }\n.dt-changed-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-brand-primary); flex: none; }\n.dt-add-skill { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-prompt-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }\n.dt-editor { min-height: 360px; }\n.dt-inline-select { width: auto; }\n.dt-preview-part { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 2px 12px; border-left: 2px solid var(--dsw-alias-border-l3); }\n.dt-preview-head { font-size: 13px; line-height: 20px; display: flex; align-items: baseline; gap: 8px; }\ndiv.dt-preview-head { color: var(--dsw-alias-label-secondary); }\n.dt-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; min-width: 0; }\n.dt-card-head { display: flex; align-items: center; gap: 12px; min-height: 28px; }\n.dt-card-head .dt-row-main { flex: 1 1 0; min-width: 64px; }\n.dt-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-row-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }\n.dt-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }\n.dt-rows-item { display: grid; grid-template-columns: repeat(var(--dt-columns), minmax(0, 1fr)) auto; gap: 8px; align-items: center; }\n.dt-filter-gap { flex: 1; }\n.dt-page-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; width: 100%; }\n.dt-page-head > div:first-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }\n.dt-page-head .dt-toolbar { flex: 0 1 auto; margin-left: auto; }\n.dt-page-head > .dt-btn { margin-left: -10px; }\n.dt-page-title { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; width: 100%; }\n.dt-page-title h2 { margin: 0; flex: 1 1 auto; min-width: 0; font-size: 20px; line-height: 28px; font-weight: 500; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }\n.dt-status-line { margin-top: -16px; }\n.dt-plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 20px; }\n.dt-plain-list > li { position: relative; padding-left: 12px; }\n.dt-plain-list > li::before { content: ''; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px; border-radius: 1px; background: currentColor; opacity: 0.45; }\n.dt-details { display: flex; flex-direction: column; gap: 2px; border-top: 0.5px solid var(--dsw-alias-border-l2); padding-top: 8px; }\n.dt-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 16px; border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-danger-zone .dt-btn { color: var(--dsw-alias-state-error-primary); }\n.dt-md { display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }\n.dt-md p, .dt-md ul, .dt-md ol { margin: 0; }\n.dt-md ul, .dt-md ol { padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }\n.dt-md-heading { font-weight: 500; }\n.dt-code { font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 12px; padding: 0 4px; border-radius: 4px; background: var(--dsw-alias-bg-module-platform); }\n.dt-dot-wrap { display: inline-flex; flex: none; }\n.dt-search-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }\n.dt-ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }\n.dt-legend-title { margin: 16px 0 6px; font-size: 13px; color: var(--dsw-alias-label-tertiary); }\n.dt-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }\n.dt-legend li { display: flex; align-items: center; gap: 6px; }\n.dt-legend .dt-dot { margin-top: 0; }\n.dt-savebar { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 12px 0; background: var(--dsw-alias-bg-base, var(--dsw-alias-bg-layer-1)); border-top: 0.5px solid var(--dsw-alias-border-l2); }\n.dt-savebar .dt-hint { margin-right: auto; }\n.dt-card > .dt-savebar, .dt-block > .dt-savebar { margin: 0 -16px -16px; padding: 12px 16px; border-radius: 0 0 16px 16px; }\n.dt-glossary { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 20px; }\n.dt-glossary th, .dt-glossary td { text-align: left; padding: 6px 8px; border-bottom: 0.5px solid var(--dsw-alias-border-l2); vertical-align: top; }\n.dt-glossary th { color: var(--dsw-alias-label-tertiary); font-weight: 400; }\n.dt-glossary th.dt-glossary-group { color: var(--dsw-alias-label-secondary); font-weight: 600; padding-top: 14px; }\n.dt-glossary th:nth-child(-n+2), .dt-glossary td:nth-child(-n+2) { white-space: nowrap; }\n.dt-values { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 16px 0 0; font-size: 13px; }\n.dt-values dt { color: var(--dsw-alias-label-tertiary); }\n.dt-values dd { margin: 0; }\n.dt-pre { margin: 0; padding: 12px; border-radius: 10px; background: var(--dsw-alias-bg-module-platform); font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 12px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; }\n.dt-pre ins { background: color-mix(in srgb, var(--dsw-alias-state-success-primary, green) 18%, transparent); text-decoration: none; }\n.dt-pre del { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent); text-decoration: none; }\n.dt-prompt { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: start; }\n.dt-prompt-nav { display: flex; flex-direction: column; gap: 2px; }\n.dt-prompt-nav button { justify-content: flex-start; }\n.dt-disclosure-body { padding: 8px 0 8px 28px; display: flex; flex-direction: column; gap: 8px; }\n@container (max-width: 640px) {\n  .dt-tab { padding: 0 8px; font-size: 13px; }\n  .dt-segment { padding: 0 10px; }\n  .dt-head { align-items: center; }\n  .dt-search-results { right: auto; left: 0; width: 100%; }\n  .dt-page-title h2 { font-size: 17px; line-height: 24px; }\n  .dt-status-line { margin-top: -12px; }\n  .dt-page .dt-tabs { display: flex; flex-wrap: nowrap; scrollbar-width: thin; }\n  .dt-page .dt-tab { flex: none; }\n  .dt-page .dt-tabs[data-more='end'] { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }\n  .dt-page .dt-tabs[data-more='start'] { mask-image: linear-gradient(to right, transparent, #000 40px); }\n  .dt-page .dt-tabs[data-more='both'] { mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); }\n  .dt-kv { grid-template-columns: 1fr; gap: 6px; }\n  .dt-grid3, .dt-prompt { grid-template-columns: 1fr; }\n  .dt-search { width: 100%; }\n  .dt-filters .dt-search { margin-left: 0; }\n}\n/* Local UI primitive styles (see controls.tsx). */\n.dt-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: none; border-radius: 18px; cursor: pointer; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); background: transparent; padding: 0 14px; white-space: nowrap; }\n.dt-btn:disabled { cursor: not-allowed; opacity: 0.4; }\n.dt-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-btn-md { height: 36px; }\n.dt-btn-sm { height: 28px; font-size: 12px; line-height: 18px; padding: 0 10px; border-radius: 14px; }\n/* 主按钮：深色下 label-primary-foreground（深色）压绿底只有 4.09 —— 深色主题里前景该是浅的。 */\n/* 往白色混 70%：浅色下仍是浅字（4.5+），深色下变浅（>4.5），两边都过。 */\n.dt-btn-primary { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-static-neutral-bluish-00); }\n.dt-btn-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }\n.dt-btn-ghost { background: transparent; border: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); }\n.dt-btn-ghost:hover:not(:disabled), .dt-btn-outline:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-btn-ghost:active:not(:disabled) { background: var(--dsw-alias-interactive-bg-active); }\n.dt-btn-outline { border: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-btn-icon { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; }\n.dt-tag { display: inline-flex; align-items: center; border-radius: 999px; padding: 1px 8px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; }\n.dt-tag[data-tone='outline'] { border: 0.5px solid var(--dsw-alias-border-l4); color: var(--dsw-alias-label-tertiary); }\n.dt-tag[data-tone='neutral'] { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); }\n.dt-tag[data-tone='quiet'] { color: var(--dsw-alias-label-secondary); }\n.dt-tag[data-tone='success'] { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 72%, var(--dsw-alias-label-primary)); }\n.dt-tag[data-tone='info'] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); color: var(--dsw-alias-state-business-primary); }\n/* 胶囊是「暂停/退避/判断」唯一的状态色：文字与 12% 同色底叠起来，浅色下警告只有 4.17。 */\n/* 往 label-primary 混 28%：浅色变深、深色变浅，两档都留出余量。 */\n.dt-tag[data-tone='warning'] { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent); color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 72%, var(--dsw-alias-label-primary)); }\n.dt-tag[data-tone='danger'] { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 76%, var(--dsw-alias-label-primary)); }\n.dt-pill { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: none; border-radius: 12px; font: inherit; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; }\n.dt-pill:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-pill-active, .dt-pill-active:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-button-ghost-active-fill); box-shadow: inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border); }\n.dt-tabs { display: grid; padding: 4px; border-radius: 12px; background: var(--dsw-alias-bg-module-platform); }\n.dt-tab { box-sizing: border-box; height: 34px; padding: 0 12px; border: 0.5px solid transparent; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 14px; line-height: 20px; white-space: nowrap; cursor: pointer; transition: color 180ms ease, background 180ms ease; }\n.dt-tab:hover { color: var(--dsw-alias-label-primary); }\n.dt-tab[aria-selected='true'] { color: var(--dsw-alias-label-primary); font-weight: 600; background: var(--dsw-alias-bg-layer-3); border-color: var(--dsw-alias-border-l3); }\n.dt-tab:focus-visible { outline: none; text-decoration: underline; text-underline-offset: 4px; }\n.dt-segment { height: 28px; padding: 0 16px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: color 120ms ease, background 160ms ease; }\n.dt-segment:hover:not(:disabled), .dt-segment[aria-selected='true'] { color: var(--dsw-alias-label-primary); }\n.dt-segment[aria-selected='true'] { background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-elevation-soft); }\n.dt-segment:disabled { cursor: default; opacity: 0.4; }\n.dt-segment:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }\n.dt-input { box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; height: 32px; min-width: 0; padding: 0 8px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); }\n.dt-input:focus-within { border-color: var(--dsw-alias-brand-primary); }\n.dt-input-icon { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; color: var(--dsw-alias-label-tertiary); }\n.dt-input input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); }\n.dt-input input/* 占位符：label-dimmed 在浅色下只有 2.17（深色 3.81），必须能读出来才叫占位符。 */\n/* 往 label-tertiary 混 60%：浅色变深、深色变浅，两档都过 4.5。 */\n::placeholder { color: color-mix(in srgb, var(--dsw-alias-label-dimmed) 40%, var(--dsw-alias-label-tertiary)); }\n.dt-input input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }\n.dt-field .dt-input, .dt-search .dt-input, .dt-add-skill .dt-input { display: flex; width: 100%; }\n.dt-switch { box-sizing: border-box; flex: 0 0 auto; width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 10px; background: var(--dsw-alias-border-l3); cursor: pointer; }\n.dt-switch[aria-checked='true'] { background: var(--dsw-alias-brand-primary); }\n.dt-switch:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-switch-thumb { display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--dsw-alias-label-primary-foreground); transition: transform 120ms ease; }\n.dt-switch[aria-checked='true'] .dt-switch-thumb { transform: translateX(16px); }\n.dt-state-dot { position: relative; display: inline-block; flex: none; width: 10px; height: 10px; color: var(--dsw-alias-state-idle-primary); }\n.dt-state-dot::after { content: ''; position: absolute; inset: 20%; border-radius: 50%; background: currentColor; }\n.dt-state-dot[data-state='done'] { color: var(--dsw-alias-state-success-primary); }\n.dt-state-dot[data-state='warning'] { color: var(--dsw-alias-state-warn-primary); }\n.dt-state-dot[data-state='error'] { color: var(--dsw-alias-state-error-primary); }\n.dt-spinner { flex: none; color: var(--dsw-alias-label-tertiary); }\n.dt-spinner g { transform-origin: center; animation: dt-spin 1.5s linear infinite; }\n.dt-spinner circle { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }\n.dt-spinner circle:first-child { opacity: 0.25; }\n.dt-spinner circle:last-child { stroke-dasharray: 18 150; }\n@keyframes dt-spin { to { transform: rotate(360deg); } }\n.dt-disclosure-row { display: flex; align-items: center; gap: 4px; min-height: 28px; min-width: 0; border-radius: 8px; cursor: pointer; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }\n.dt-disclosure-row:hover { color: var(--dsw-alias-label-primary); }\n.dt-disclosure-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n.dt-disclosure-lead { position: relative; display: inline-flex; flex: none; width: 24px; height: 24px; align-items: center; justify-content: center; }\n.dt-disclosure-icon { display: inline-flex; align-items: center; justify-content: center; }\n.dt-disclosure-chevron { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; }\n.dt-disclosure-row:hover .dt-disclosure-icon, .dt-disclosure[data-open] .dt-disclosure-icon { visibility: hidden; }\n.dt-disclosure-row:hover .dt-disclosure-chevron, .dt-disclosure[data-open] .dt-disclosure-chevron { display: inline-flex; }\n.dt-disclosure-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-modal-root { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: max(24px, var(--dsh-frame-top-clearance, 24px)) 24px; }\n.dt-modal-mask { position: absolute; inset: 0; background: var(--dsw-alias-bg-mask-1); backdrop-filter: var(--dsw-mask-blur); }\n.dt-modal { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 20px; width: min(380px, 100%); max-height: 100%; padding: 0 0 24px; overflow-x: hidden; overflow-y: auto; border-radius: 24px; background: var(--dsw-alias-bg-layer-2); box-shadow: var(--dsw-elevation-prominent); color: var(--dsw-alias-label-primary); outline: none; }\n.dt-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 22px 14px 0 24px; }\n.dt-modal-header h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }\n.dt-modal-close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; cursor: pointer; color: var(--dsw-alias-label-secondary); }\n.dt-modal-close:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-modal-description { margin: -8px 0 0; padding: 0 24px; font-size: 14px; line-height: 22px; }\n.dt-modal-body { min-width: 0; min-height: 0; overflow: auto; padding: 0 24px; }\n.dt-modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 24px; }\n.dt-modal-header, .dt-modal-description, .dt-modal-footer { flex-shrink: 0; }\n.dt-toast { position: fixed; top: 40px; left: 50%; z-index: 1100; pointer-events: none; width: max-content; max-width: min(640px, calc(100vw - 48px)); padding: 12px 16px; border-radius: 14px; background: var(--dsw-alias-toast-bg); color: var(--dsw-static-neutral-bluish-00); font-size: 14px; line-height: 22px; box-shadow: var(--dsw-shadow-lv3); transform: translateX(-50%); animation: dt-toast-in 160ms ease-out, dt-toast-fade 1000ms ease var(--dt-toast-hold, 3000ms) forwards; }\n@keyframes dt-toast-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }\n@keyframes dt-toast-fade { to { opacity: 0; visibility: hidden; } }\n@media (prefers-reduced-motion: reduce) {\n  .dt-tab, .dt-segment, .dt-switch-thumb, .dt-spinner g, .dt-btn-busy .dt-btn-icon svg, .dt-tooltip { transition: none; animation: none; }\n  .dt-toast { animation: dt-toast-fade 1000ms ease var(--dt-toast-hold, 3000ms) forwards; }\n}\n.dt-page .dt-tab { height: 34px; padding: 0 2px; border: 0; border-radius: 0; color: var(--dsw-alias-label-tertiary); font-size: 14px; }\n.dt-page .dt-tab[aria-selected='true'] { background: none; color: var(--dsw-alias-label-primary); font-weight: 500; box-shadow: inset 0 -1.5px 0 var(--dsw-alias-label-primary); }\n.dt-status-head { display: flex; align-items: center; gap: 8px; }\n.dt-status-title { margin: 0; flex: 1; display: flex; align-items: center; gap: 4px; font-size: 15px; line-height: 22px; font-weight: 600; }\n.dt-status-text { margin-left: auto; flex: none; font-size: 12px; font-weight: 400; color: var(--dsw-alias-label-secondary); }\n.dt-status-line .dt-status-text { margin-left: 0; }\n.dt-status-text[data-state='warning'] { color: var(--dsw-alias-state-warn-primary); }\n.dt-status-text[data-state='error'] { color: var(--dsw-alias-state-error-primary); }\n.dt-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }\n.dt-lv { white-space: nowrap; }\n.dt-lv-label { color: var(--dsw-alias-label-caption); }\n.dt-lv-value { color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }\n.dt-chip { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 6px; overflow: hidden; font-size: 11px; line-height: 18px; color: var(--dsw-alias-label-secondary); }\n.dt-chip-source { padding: 0 6px; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-module-platform); }\n.dt-chip-fact { padding: 0 6px; border-left: 0.5px solid var(--dsw-alias-border-l3); white-space: nowrap; }\n.dt-chip-label { margin-right: 4px; color: var(--dsw-alias-label-caption); }\n.dt-chip-link { position: relative; z-index: 1; text-decoration: none; cursor: pointer; transition: border-color 120ms ease; }\n.dt-chip-link:hover { border-color: var(--dsw-alias-brand-primary); }\n.dt-chip-link:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-chip-open { display: inline-flex; align-items: center; padding: 0 5px; border-left: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-brand-primary); }\n.dt-chip-problem, .dt-chip-problem .dt-chip-label { color: var(--dsw-alias-state-error-primary); }\n.dt-cards { gap: 8px; }\n.dt-att .dt-inline-link { font-size: 13px; font-weight: 500; }\n.dt-list > .dt-att { margin: 2px 8px; }\n.dt-att { padding: 10px 12px 10px 16px; border: 0; border-radius: 0; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-att::before { content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; border-radius: 1px; background: var(--dsw-alias-state-warn-primary); opacity: 0.7; }\n.dt-att-error::before { background: var(--dsw-alias-state-error-primary); }\n.dt-att-what { font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-state-warn-primary); }\n.dt-att-error .dt-att-what, .dt-att-error .dt-att-what .dt-open { color: var(--dsw-alias-state-error-primary); }\n.dt-stats { display: flex; flex-wrap: wrap; gap: 6px 24px; padding: 10px 14px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 12px; background: var(--dsw-alias-bg-module-platform); }\n.dt-stat { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-caption); }\n/* 可点的统计数字：去掉原生按钮外观，保留文字排版；选中时用浅底提示 */\n.dt-stat-btn { border: 0; background: none; padding: 2px 6px; margin: -2px -6px; border-radius: 8px; font: inherit; color: inherit; cursor: pointer; }\n.dt-stat-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }\n/* 浅色下 interactive-bg-hover 与白底只差 1.03：点了统计数字在按筛选，零视觉反馈。 */\n/* 换成品牌色 12% 底 + 0.5px 品牌色描边（两个主题都分得开）。 */\n.dt-stat-btn[aria-pressed='true'] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent); box-shadow: inset 0 0 0 0.5px var(--dsw-alias-brand-primary); }\n.dt-stat-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n/* 统计条单位：按钮上的 color:inherit 会把单位染成数字色，所以单位单独一档。 */\n/* 浅色下 caption（#818b98）在白底只有 3.14–3.45，深色下同一档 4.34–5.07。 */\n/* 往 label-primary 混 30%：浅色变深、深色变浅，两个主题的对比度同时变好（不用新 token）。 */\n/* 注意选择器**不带** .dt-stat-btn 前缀 —— 带前缀就只作用于可点的格子，不可点的仍是旧色（真机踩过）。 */\n.dt-stat-unit { color: color-mix(in srgb, var(--dsw-alias-label-caption) 70%, var(--dsw-alias-label-primary)); }\n/* 选中的统计格：品牌色 12% 底会把单位压到 4.20，再往主色多混 10% 拉回来。 */\n.dt-stat-btn[aria-pressed='true'] .dt-stat-unit { color: color-mix(in srgb, var(--dsw-alias-label-caption) 58%, var(--dsw-alias-label-primary)); }\n.dt-stat-value { font-size: 14px; font-weight: 500; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }\n.dt-more-link { font-size: 12px; font-weight: 400; }\n.dt-settings { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 24px; align-items: start; }\n.dt-settings-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; }\n.dt-settings-link { padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }\n.dt-settings-link:hover { color: var(--dsw-alias-label-primary); }\n.dt-settings-link[aria-current='page'] { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-primary); font-weight: 500; }\n.dt-settings-link[data-stage] + .dt-settings-link:not([data-stage]) { margin-top: 10px; }\n.dt-settings-body { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }\n.dt-settings-title { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }\n.dt-settings-body .dt-section-title { font-size: 15px; line-height: 22px; }\n.dt-subtabs { display: flex; gap: 16px; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-subtab { padding: 0 0 6px; border: 0; background: none; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 13px; cursor: pointer; }\n.dt-subtab[aria-selected='true'] { color: var(--dsw-alias-label-primary); font-weight: 500; box-shadow: inset 0 -1.5px 0 var(--dsw-alias-label-primary); }\n.dt-part { display: flex; flex-direction: column; gap: 12px; }\n.dt-rows-summary { text-align: left; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }\n.dt-table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 18px; }\n.dt-table th { text-align: left; font-weight: 400; color: var(--dsw-alias-label-caption); padding: 2px 8px 2px 0; }\n.dt-table td { padding: 4px 8px 4px 0; border-top: 0.5px solid var(--dsw-alias-border-l3); vertical-align: top; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }\n@container (max-width: 640px) {\n  .dt-settings { grid-template-columns: 1fr; gap: 12px; }\n  .dt-settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }\n  .dt-settings-link[data-stage] + .dt-settings-link:not([data-stage]) { margin-top: 0; }\n  .dt-page .dt-tabs { gap: 14px; }\n}\n.dt-list > .dt-ticket { display: grid; grid-template-columns: 112px minmax(0, 1fr); column-gap: 12px; align-items: start; margin: 0; padding: 12px 8px 12px 18px; border-radius: 0; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-list > .dt-ticket[data-state]::before { content: ''; position: absolute; left: 6px; top: 12px; bottom: 12px; width: 2px; border-radius: 1px; background: var(--dsw-alias-state-warn-primary); opacity: 0.7; }\n.dt-list > .dt-ticket[data-state='error']::before { background: var(--dsw-alias-state-error-primary); }\n.dt-ticket-stage { align-self: stretch; padding-top: 1px; border-right: 0.5px solid var(--dsw-alias-border-l3); }\n.dt-ticket-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }\n.dt-ticket-body .dt-row-title .dt-open { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.dt-ticket-meta { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }\n.dt-ticket-meta .dt-chip { flex: none; }\n.dt-ticket-meta .dt-ticket-actions { margin-top: 0; margin-left: auto; min-height: 0; flex-wrap: nowrap; }\n@container (max-width: 640px) { .dt-ticket-meta { flex-wrap: wrap; white-space: normal; } .dt-ticket-meta .dt-ticket-actions { flex-wrap: wrap; } }\n.dt-ticket-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dsw-alias-label-primary); }\n.dt-ticket-note-error { color: var(--dsw-alias-state-error-primary); }\n.dt-ticket-note-pause { font-weight: 500; color: var(--dsw-alias-state-warn-primary); }\n.dt-ticket-actions { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px; min-height: 30px; margin-top: 2px; }\n/* Pass pointer events through action containers to the row link, keeping only child controls interactive. */\n.dt-ticket-actions, .dt-row-buttons, .dt-row-actions { pointer-events: none; }\n.dt-ticket-actions > *, .dt-row-buttons > *, .dt-row-actions > * { pointer-events: auto; }\n.dt-line { min-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.dt-row-meta.dt-line { flex-wrap: nowrap; }\n.dt-line-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); }\n.dt-error-text { color: var(--dsw-alias-state-error-primary); }\n.dt-stage { display: inline-flex; align-items: flex-start; gap: 5px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-label-secondary); }\n.dt-stage svg { flex: none; margin-top: 2px; }\n.dt-stage[data-state='warning'] { color: var(--dsw-alias-state-warn-primary); }\n.dt-stage[data-state='error'] { color: var(--dsw-alias-state-error-primary); }\n.dt-stage[data-state='ongoing'] { color: var(--dsw-alias-state-business-primary); }\n.dt-icon-link { display: inline-flex; align-items: center; gap: 4px; }\na.dt-btn, a.dt-btn:hover { text-decoration: none; }\n.dt-section-icon { display: inline-flex; align-self: center; color: var(--dsw-alias-label-tertiary); }\n.dt-trigger-link { display: flex; flex-direction: column; gap: 2px; width: 100%; margin: -4px 0 -4px -8px; padding: 4px 8px; border: 0; border-radius: 8px; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }\n.dt-trigger-link:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dt-trigger-link:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-trigger-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }\n.dt-kv-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }\n.dt-banner-actions { margin-top: 6px; }\n@container (max-width: 640px) {\n  .dt-list > .dt-ticket { grid-template-columns: 1fr; row-gap: 4px; }\n  .dt-ticket-stage { border-right: 0; }\n}\n.dt-nav-group { margin: 10px 10px 2px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary); }\n.dt-nav-group:first-child { margin-top: 0; }\n.dt-prompt-nav .dt-nav-item { flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }\n.dt-nav-item > span { display: inline-flex; align-items: center; gap: 6px; }\n.dt-nav-item small { font-size: 12px; line-height: 18px; font-weight: 400; color: var(--dsw-alias-label-caption); }\n.dt-preview-part[data-editable] { border-left-color: var(--dsw-alias-brand-primary); }\n.dt-preview-head b { font-weight: 500; }\n.dt-preview-head > span { font-size: 12px; color: var(--dsw-alias-label-caption); }\n.dt-changed-tag { margin-left: 6px; padding: 0 5px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 4px; font-size: 11px; line-height: 16px; font-weight: 400; color: var(--dsw-alias-label-secondary); }\n.dt-updated-tag { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-primary); }\n.dt-default-updated { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 2px 12px; border-left: 2px solid var(--dsw-alias-state-warn-primary); }\n.dt-diff-fold { color: var(--dsw-alias-label-caption); font-style: italic; }\n.dt-compare { margin-left: auto; }\n.dt-admission th { white-space: nowrap; }\n.dt-admission thead tr:first-child th:not(:first-child) { color: var(--dsw-alias-label-secondary); font-weight: 500; }\n.dt-admission td { vertical-align: middle; }\n.dt-admission-scope { color: var(--dsw-alias-label-primary); font-size: 13px; }\n.dt-admission-scope small { display: block; font-size: 11px; color: var(--dsw-alias-label-caption); }\n.dt-admission-na { color: var(--dsw-alias-label-caption); }\n.dt-admission-cell { display: flex; align-items: center; gap: 4px; }\n.dt-admission-cell .dt-select { flex: 1; min-width: 0; }\n.dt-admission-slot { display: inline-flex; flex: none; width: 16px; }\n.dt-info-warn { color: var(--dsw-alias-state-warn-primary); }\n.dt-field-segmented { max-width: 240px; }\n/* 活跃时段：两个原生 time 选择器 + 全天按钮 */\n/* 表单控件不必满宽：短数字撑到 900px 只会显得空 */\n.dt-form > .dt-field > .dt-input { max-width: 480px; }\n.dt-error-card { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 35%, var(--dsw-alias-border-l3)); }\n.dt-error-card .dt-card-title { color: var(--dsw-alias-state-error-primary); }\n/* 空态引导：圆形步骤号 + 标题 + 说明，替代「① + 列表符号」的重复 */\n.dt-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; counter-reset: none; }\n.dt-step { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }\n.dt-step-num { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1; font-variant-numeric: tabular-nums; }\n.dt-step-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }\n.dt-step-title { font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dsw-alias-label-primary); }\n.dt-empty { display: flex; flex-direction: column; gap: 6px; padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 12px; }\n.dt-step-detail { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }\n.dt-hours { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }\n.dt-time { box-sizing: border-box; height: 32px; padding: 0 8px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }\n.dt-time:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }\n.dt-hours-sep { color: var(--dsw-alias-label-tertiary); }\n.dt-hours-hint { font-size: 12px; color: var(--dsw-alias-label-caption); }\n/* 分诊信号表（设置 → 诊断）：左列「名字 + 两个标签」成组，右列 `+N 分` 定宽贴右、数字等宽。只挂局部类，全局 .dt-row-title 一行没动 —— 别的列表还在用它。 */\n.dt-signal-title { display: grid; grid-template-columns: minmax(0, 1fr) 4.5em; align-items: baseline; column-gap: 12px; }\n.dt-signal-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }\n.dt-signal-meta { display: block; justify-self: stretch; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }\n/* 同一个维度（默认开/关）的两档要等权：`默认关` 原本是 49×19 的裸字，`默认开` 是 51×21 的描边胶囊。 */\n.dt-signal-lead .dt-tag[data-tone='quiet'] { border: 0.5px solid var(--dsw-alias-border-l4); }\n/* 会话头部入口：尺寸与配色照官方 Forge HeaderButton.module.css 的 .trigger（28px、label-secondary，按下才给 interactive-bg-active）。 */\n.dt-header-entry { position: relative; flex: none; width: 28px; color: var(--dsw-alias-label-secondary); }\nbutton.dt-header-entry { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; font: inherit; cursor: pointer; }\n.dt-header-entry:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }\n.dt-header-entry[aria-pressed='true'] { color: var(--dsw-alias-label-primary); }\n/* 只有官方 Button 路径填底色：圆角由宿主 Button 自己拥有，这里不写自造半径。 */\n.dt-header-entry-host[aria-pressed='true'] { background: var(--dsw-alias-interactive-bg-active); }\n@media (hover: hover) { .dt-header-entry-host[aria-pressed='true']:hover:not(:disabled) { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-active); } }\n.dt-header-entry:disabled { cursor: not-allowed; opacity: .4; }\n.dt-header-entry:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }\n";
 
     /** 把移植过来的样式挂到 document 上，只挂一次。 */
     /**
@@ -768,6 +812,8 @@ window.__ModuleLoader__.load({
      * 以前这里是一整套自成体系的 inline style，和原生界面放一起能看出断层。
      */
     const DOCK_CSS = `
+/* 目标会话选择器进入预览后，控件边界也须达到 3:1；只换官方 token，不提高豁免基线。 */
+.dt-page .dt-select { border-color: var(--dsw-alias-label-tertiary); }
 /* HoursField 多段：沿用官方 dt-hours 行与 dt-btn，只补 derived 纵向列表。 */
 .sa-hours-list { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 /* Composer dock 入口：保留 20px derived 几何；交互色与焦点复用官方 dt-btn / ghost 规则。 */
@@ -809,7 +855,7 @@ window.__ModuleLoader__.load({
 @media (hover: none) { .sa-dock-actions { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sa-dock-actions { transition: none; } }
 .sa-dock-empty { padding: 4px 14px 12px; color: var(--dsw-alias-label-tertiary); }
-.sa-dock-foot { padding: 8px 14px 10px; border-top: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-caption); }
+.sa-dock-foot { padding: 8px 14px 10px; border-top: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); }
 `
 
     /**
@@ -1019,14 +1065,15 @@ window.__ModuleLoader__.load({
     }
 
     // 审核 T26 W2：以前  传了但这里不解构 —— 传的人以为会显示，其实被静默吞掉。
-    function Section({ title, count, subtitle, hint, action, children }) {
+    function Section({ title, count, subtitle, hint, action, icon, children }) {
       return h('section', { className: 'dt-section' },
         title
           ? h('h2', { className: 'dt-section-title' },
+            icon ? h('span', { className: 'dt-section-icon' }, h(Icon, { name: icon, size: 14 })) : null,
             h('span', { className: 'dt-section-name' }, title),
             count !== undefined && count !== null ? h('span', { className: 'dt-count' }, String(count)) : null,
             subtitle ? h('span', { className: 'dt-section-sub' }, subtitle) : null,
-            action ? h('span', { className: 'dt-subhead-actions' }, action) : null)
+            action ? h('span', { className: 'dt-subhead-actions', style: { marginLeft: 'auto' } }, action) : null)
           : null,
         hint ? h(Hint, null, hint) : null,
         children)
@@ -1351,14 +1398,14 @@ window.__ModuleLoader__.load({
     }
 
     /** superagent SaveBar 的精简草稿状态：clean 不挂载，dirty/busy/error 才挂载。 */
-    function SaveBar({ dirty, busy, error, disabled, onDiscard, onSave, saveLabel = '保存' }) {
+    function SaveBar({ dirty, busy, error, disabled, onDiscard, onSave, saveLabel = '保存', discardLabel = '放弃', status, busyLabel = '保存中…' }) {
       if (!dirty && !busy && !error) return null
       return h('div', { className: 'dt-savebar' },
         error
           ? h('p', { className: 'dt-error', role: 'alert' }, error)
-          : h('p', { className: 'dt-hint', 'aria-live': 'polite' }, busy ? '保存中…' : '未保存'),
-        h(Btn, { size: 'sm', variant: 'ghost', disabled: !dirty || !!busy || !!disabled, onClick: onDiscard }, '放弃'),
-        h(Btn, { size: 'sm', variant: 'primary', type: 'submit', disabled: !dirty || !!busy || !!disabled, onClick: onSave }, busy ? '保存中…' : saveLabel))
+          : h('p', { className: 'dt-hint', 'aria-live': 'polite' }, status || (busy ? busyLabel : '未保存')),
+        h(Btn, { size: 'sm', variant: 'ghost', 'aria-label': discardLabel, disabled: !dirty || !!busy || !!disabled, onClick: onDiscard }, discardLabel),
+        h(Btn, { size: 'sm', variant: 'primary', type: 'submit', 'aria-label': busy ? busyLabel : saveLabel, disabled: !dirty || !!busy || !!disabled, onClick: onSave }, busy ? busyLabel : saveLabel))
     }
 
     /**
@@ -1474,7 +1521,7 @@ window.__ModuleLoader__.load({
     }
 
     function WatcherForm({ mode = 'edit', idPrefix = 'watcher', value, snapshot, defaults = {}, disabled = false,
-      onChange, onSave, onDiscard, submitLabel = '保存', sessionId }) {
+      onChange, onSave, onDiscard, submitLabel = '保存', sessionId, targetControl = null }) {
       const [advancedOpen, setAdvancedOpen] = useState(false)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
@@ -1601,6 +1648,7 @@ window.__ModuleLoader__.load({
           if ((!next || !event.currentTarget.contains(next)) && !(busyRef.current && !next)) formFocusedRef.current = false
         },
       },
+        typeof targetControl === 'function' ? targetControl(busy) : targetControl,
         h(Fields, { disabled: busy || disabled },
           basic,
           h(DisclosureRow, {
@@ -1620,11 +1668,388 @@ window.__ModuleLoader__.load({
     }
 
     function KeyValues({ rows }) {
+      // 与官方 widgets.tsx 一致：每对 dt/dd 都由 display:contents 行容器包裹。
       return h('dl', { className: 'dt-kv' },
-        rows.filter(Boolean).flatMap(([key, value]) => [
-          h('dt', { key: key + '-k' }, key),
-          h('dd', { key: key + '-v' }, value),
-        ]))
+        rows.filter(Boolean).map(([key, value], index) => h('div', { key: String(key) + '-' + index, style: { display: 'contents' } },
+          h('dt', null, key),
+          h('dd', null, value))))
+    }
+
+    function LabelValue({ label, value }) {
+      return h('span', { className: 'dt-lv' },
+        h('span', { className: 'dt-section-sub' }, label),
+        ' ',
+        h('span', { className: 'dt-lv-value' }, value))
+    }
+
+    function StageMark({ state, icon, label }) {
+      return h('span', { className: 'dt-stage', 'data-state': state },
+        state === 'ongoing' ? h(StateDot, { state: 'ongoing' }) : h(Icon, { name: icon, size: 14 }),
+        label)
+    }
+
+    // 模块化房间只复用现有 Section/Btn/KeyValues/TicketLine 结构；动作由宿主数据层注入，
+    // 浏览器视图不自行臆造 HTTP 路径。未知计数必须显式写“未知”，不能用 || 0 吞掉 null。
+    const MODULAR_VIEW_TEXT = {
+      zh: {
+        tab: '房间', records: 'Ticket records', execution: '当前执行', health: '部署与健康', outbox: 'Outbox', draft: '草稿',
+        unknown: '未知', none: '无', yes: '是', no: '否', all: '全部', filterEmpty: '当前筛选没有 Ticket。',
+        total: '总数', open: '待接单', assigned: '执行中', waiting: '等待', ended: '已结束',
+        currentTicket: '当前 Ticket', assignment: 'Assignment', session: '会话', running: '运行中', queued: '排队',
+        active: '活跃 Ticket', maxWorkers: 'worker 上限', paused: '已暂停', status: '状态', stateDir: '状态目录', problem: '问题',
+        pending: '待发送', sending: '发送中', sent: '已发送', failed: '失败', gone: '已失效',
+        attempts: '尝试', history: '历史', resumes: '恢复次数', workdir: '工作目录',
+        createdAt: '创建时间', updatedAt: '更新时间', endedAt: '结束时间', endReason: '结束原因',
+        recordsUnknown: 'Ticket records 未知。', recordsEmpty: '没有 Ticket records。',
+        executionUnknown: '当前执行未知。', executionEmpty: '当前没有执行。',
+        executionIntro: '这里显示当前 Ticket、执行 Assignment 与 worker 负载；停止的是当前 Ticket，不是全局暂停。',
+        executorRunning: '执行器运行中', processingPaused: 'worker 执行已暂停', executionIdle: '当前没有执行',
+        pauseProcessing: '暂停 worker', resumeProcessing: '恢复 worker', pauseMessage: '只暂停或恢复新的 worker 自动执行；inline 会话的既有唤醒规则不变。',
+        openSession: '打开 Session',
+        healthUnknown: '健康项未知。', healthEmpty: '没有健康项。',
+        outboxUnknown: 'Outbox 未知。', outboxEmpty: 'Outbox 为空。', draftUnknown: '草稿未知。',
+        back: '返回 Ticket records', identifiers: '标识与执行信息',
+        resume: '恢复', stop: '停止', flush: '发送 Outbox', save: '保存草稿', clear: '清空草稿',
+        confirm: '确认', cancel: '取消', resumeTitle: '恢复 Ticket', stopTitle: '停止 Ticket',
+        resumeMessage: (id) => '确定要恢复 ' + id + ' 吗？恢复后仍需等待新的执行分派。',
+        stopMessage: (id) => '确定要停止 ' + id + ' 吗？当前执行会结束。',
+        draftValue: '草稿内容', revision: 'revision', phase: '阶段', dirty: '已有修改', unsaved: '未保存',
+        discard: '放弃修改', saving: '保存中…', saveFailed: '保存失败，草稿仍保留在本地。',
+        clearFailed: '清空失败，草稿仍保留。', invalidJson: '草稿必须是合法 JSON。',
+        states: {
+          open: '待接单', assigned: '执行中', waiting: '等待', ended: '已结束',
+          pending: '待发送', sending: '发送中', sent: '已发送', failed: '失败', gone: '已失效',
+          ready: '就绪', error: '异常', starting: '启动中', paused: '已暂停', unknown: '未知',
+          clean: '干净', editing: '编辑中',
+        },
+      },
+      en: {
+        tab: 'Rooms', records: 'Ticket records', execution: 'Current execution', health: 'Deployment & health', outbox: 'Outbox', draft: 'Draft',
+        unknown: 'Unknown', none: 'None', yes: 'Yes', no: 'No', all: 'All', filterEmpty: 'No Tickets match this filter.',
+        total: 'Total', open: 'Open', assigned: 'Assigned', waiting: 'Waiting', ended: 'Ended',
+        currentTicket: 'Current Ticket', assignment: 'Assignment', session: 'Session', running: 'Running', queued: 'Queued',
+        active: 'Active Tickets', maxWorkers: 'Worker limit', paused: 'Paused', status: 'Status', stateDir: 'State directory', problem: 'Problem',
+        pending: 'Pending', sending: 'Sending', sent: 'Sent', failed: 'Failed', gone: 'Gone',
+        attempts: 'Attempts', history: 'History', resumes: 'Resumes', workdir: 'Working directory',
+        createdAt: 'Created', updatedAt: 'Updated', endedAt: 'Ended at', endReason: 'End reason',
+        recordsUnknown: 'Ticket records are unknown.', recordsEmpty: 'No Ticket records.',
+        executionUnknown: 'Current execution is unknown.', executionEmpty: 'No current execution.',
+        executionIntro: 'Shows the current Ticket, Assignment, and worker load. Stop ends the current Ticket; it is not a global pause.',
+        executorRunning: 'Executor running', processingPaused: 'Worker execution paused', executionIdle: 'No current execution',
+        pauseProcessing: 'Pause workers', resumeProcessing: 'Resume workers', pauseMessage: 'Pause or resume new automatic worker execution only; existing inline wake rules are unchanged.',
+        openSession: 'Open Session',
+        healthUnknown: 'Health entries are unknown.', healthEmpty: 'No health entries.',
+        outboxUnknown: 'Outbox is unknown.', outboxEmpty: 'Outbox is empty.', draftUnknown: 'Draft is unknown.',
+        back: 'Back to Ticket records', identifiers: 'Identifiers & execution',
+        resume: 'Resume', stop: 'Stop', flush: 'Flush outbox', save: 'Save draft', clear: 'Clear draft',
+        confirm: 'Confirm', cancel: 'Cancel', resumeTitle: 'Resume Ticket', stopTitle: 'Stop Ticket',
+        resumeMessage: (id) => 'Resume ' + id + '? A new Assignment is still required before work can continue.',
+        stopMessage: (id) => 'Stop ' + id + '? The current execution will end.',
+        draftValue: 'Draft value', revision: 'Revision', phase: 'Phase', dirty: 'Modified', unsaved: 'Unsaved changes',
+        discard: 'Discard changes', saving: 'Saving…', saveFailed: 'Save failed. Your local draft is preserved.',
+        clearFailed: 'Clear failed. Your draft is preserved.', invalidJson: 'Draft must be valid JSON.',
+        states: {
+          open: 'Open', assigned: 'Assigned', waiting: 'Waiting', ended: 'Ended',
+          pending: 'Pending', sending: 'Sending', sent: 'Sent', failed: 'Failed', gone: 'Gone',
+          ready: 'Ready', error: 'Error', starting: 'Starting', paused: 'Paused', unknown: 'Unknown',
+          clean: 'Clean', editing: 'Editing',
+        },
+      },
+    }
+
+    function modularCopy(locale) {
+      const tag = String(locale || '').trim().toLowerCase().replaceAll('_', '-')
+      return MODULAR_VIEW_TEXT[tag === 'en' || tag.startsWith('en-') ? 'en' : 'zh']
+    }
+
+    function modularCount(value, copy) {
+      return value === null || value === undefined ? copy.unknown : String(value)
+    }
+
+    function modularValue(value, copy) {
+      if (value === null || value === undefined) return copy.unknown
+      if (typeof value === 'string') return value || copy.none
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+      try { return JSON.stringify(value) } catch { return copy.unknown }
+    }
+
+    function modularState(value, copy) {
+      return (value && copy.states[value]) || value || copy.unknown
+    }
+
+    function ModularDraft({ draft, ticketId, copy, onSave, onClear }) {
+      // 生产 /draft 的 value 是 {ticketId, body:string}；编辑器只改 body，
+      // 不能把整个 value 对象 String 成 "[object Object]" 再交给服务端。
+      const bodyValue = draft.value && typeof draft.value === 'object' && typeof draft.value.body === 'string'
+      const plainText = typeof draft.value === 'string' || bodyValue
+      const initial = typeof draft.value === 'string'
+        ? draft.value
+        : bodyValue ? draft.value.body : JSON.stringify(draft.value === undefined ? null : draft.value, null, 2)
+      const storageKey = 'dsh-session-superagent:draft:' + String(ticketId || 'unknown')
+      const [value, setValue] = useState(() => {
+        try {
+          const stored = JSON.parse(globalThis.sessionStorage.getItem(storageKey) || 'null')
+          if (stored && typeof stored.body === 'string' && Number.isInteger(stored.revision) && stored.revision <= draft.revision) return stored.body
+        } catch {}
+        return initial
+      })
+      const [error, setError] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const busyRef = useRef(false)
+      const previousInitial = useRef(initial)
+      useEffect(() => {
+        try { globalThis.sessionStorage.setItem(storageKey, JSON.stringify({ ticketId, body: value, revision: draft.revision })) } catch {}
+      }, [storageKey, ticketId, value, draft.revision])
+      useEffect(() => {
+        // 409 后回读会推进服务端 revision；本地已编辑文本必须保留。
+        // 只有用户没有未保存修改时，才跟随另一标签页/服务端的新值。
+        if (value === previousInitial.current) setValue(initial)
+        previousInitial.current = initial
+      }, [initial])
+      const dirty = value !== initial || draft.dirty === true
+      const save = async (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault()
+        if (busyRef.current || !dirty || !onSave) return false
+        let body = value
+        if (!plainText) {
+          try { body = JSON.parse(value) } catch {
+            setError(copy.invalidJson)
+            return false
+          }
+        }
+        busyRef.current = true
+        setBusy(true)
+        setError(null)
+        try {
+          const result = await onSave(body, { ticketId, body, revision: draft.revision })
+          if (result === false) setError(copy.saveFailed)
+          return result
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure || copy.saveFailed))
+          return false
+        } finally {
+          busyRef.current = false
+          setBusy(false)
+        }
+      }
+      const clear = async () => {
+        if (busyRef.current || !onClear) return false
+        busyRef.current = true
+        setBusy(true)
+        setError(null)
+        try {
+          const result = await onClear({ ticketId, revision: draft.revision, clear: true })
+          if (result === false) setError(copy.clearFailed)
+          else setValue('')
+          return result
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure || copy.clearFailed))
+          return false
+        } finally {
+          busyRef.current = false
+          setBusy(false)
+        }
+      }
+      return h('form', { className: 'dt-form', onSubmit: save },
+        h(KeyValues, { rows: [
+          [copy.revision, modularCount(draft.revision, copy)],
+          [copy.phase, modularState(draft.phase, copy)],
+          [copy.dirty, draft.dirty === true ? copy.yes : draft.dirty === false ? copy.no : copy.unknown],
+        ] }),
+        h(Fields, { disabled: busy },
+          h(Field, { id: 'modular-draft-body', label: copy.draftValue },
+            h('textarea', {
+              className: 'dt-textarea', rows: 6, value, spellCheck: false,
+              'aria-label': copy.draftValue,
+              onChange: (event) => { setError(null); setValue(event.target.value) },
+            }))),
+        h(SaveBar, {
+          dirty, busy, error, disabled: !onSave,
+          onDiscard: () => { setError(null); setValue(initial) },
+          onSave: save, saveLabel: copy.save, discardLabel: copy.discard,
+          status: dirty ? copy.unsaved : undefined, busyLabel: copy.saving,
+        }),
+        h('div', { className: 'dt-danger-zone' },
+          h('span', { className: 'dt-hint' }, copy.draftValue + ' · ' + modularState(draft.phase, copy)),
+          h(Btn, {
+            size: 'sm', variant: 'outline', 'aria-label': copy.clear, disabled: busy || !onClear, onClick: clear,
+          }, copy.clear)))
+    }
+
+    function ModularView({ data, actions, onAction, onOpenSession }) {
+      const source = data && typeof data === 'object' ? data : {}
+      const records = source.records && typeof source.records === 'object' ? source.records : {}
+      const execution = source.execution && typeof source.execution === 'object' ? source.execution : {}
+      const deployment = source.deployment && typeof source.deployment === 'object' ? source.deployment : {}
+      const outbox = records.outbox && typeof records.outbox === 'object'
+        ? records.outbox
+        : (execution.outbox && typeof execution.outbox === 'object' ? execution.outbox : {})
+      const copy = modularCopy(source.locale)
+      const available = (name) => Boolean((actions && typeof actions[name] === 'function') || typeof onAction === 'function')
+      const perform = (name, args = [], payload) => {
+        if (actions && typeof actions[name] === 'function') return actions[name](...args)
+        if (typeof onAction === 'function') return onAction(name, payload)
+        return false
+      }
+      const current = execution.current && typeof execution.current === 'object' ? execution.current : null
+      const assignment = execution.assignment && typeof execution.assignment === 'object' ? execution.assignment : null
+      const currentTicketId = (current && current.id) || (assignment && assignment.ticketId) || null
+      const draft = source.draft && typeof source.draft === 'object' ? source.draft : null
+      const draftTicketId = (draft && (draft.ticketId || (draft.value && draft.value.ticketId))) || currentTicketId
+        || (Array.isArray(records.records) && records.records[0] && records.records[0].id) || null
+      const ticketRows = Array.isArray(records.records) ? records.records : []
+      const healthRows = Array.isArray(deployment.health) ? deployment.health : []
+      const outboxRows = Array.isArray(outbox.records) ? outbox.records : []
+      const [ticketFilter, setTicketFilter] = useState('all')
+      const [selectedTicketId, setSelectedTicketId] = useState(null)
+      const selectedTicket = ticketRows.find((record) => record && record.id === selectedTicketId) || null
+      const visibleTickets = ticketFilter === 'all' ? ticketRows : ticketRows.filter((record) => record && record.status === ticketFilter)
+      const stageProps = (status) => status === 'assigned'
+        ? { state: 'ongoing', icon: 'refresh' }
+        : status === 'waiting' ? { state: 'warning', icon: 'clock' }
+          : status === 'ended' ? { state: 'idle', icon: 'stop' } : { state: 'idle', icon: 'inbox' }
+      const actionButtons = (ticketId, status) => {
+        // ticket-state：只有 ended 才能被显式人类 resume；已结束的执行不再 stop。
+        const canResume = Boolean(ticketId && status === 'ended' && available('resume'))
+        const canStop = Boolean(ticketId && status && status !== 'ended' && available('stop'))
+        return h(React.Fragment, null,
+          h(Btn, {
+            size: 'sm', variant: 'ghost', 'aria-label': copy.resume, disabled: !canResume,
+            onClick: () => canResume ? perform('resume', [ticketId], { ticketId }) : false,
+          }, copy.resume),
+          h(ConfirmButton, {
+            size: 'sm', variant: 'outline', label: copy.stop, confirmLabel: copy.stop, disabled: !canStop,
+            title: copy.stopTitle, message: copy.stopMessage(ticketId),
+            onConfirm: () => canStop ? perform('stop', [ticketId], { ticketId }) : false,
+          }))
+      }
+
+      return h('div', { className: 'dt-column' },
+        h(Section, { title: copy.records, count: modularCount(records.total, copy) },
+          h('div', { className: 'dt-filters', role: 'group', 'aria-label': copy.records }, ['all', 'open', 'assigned', 'waiting', 'ended'].map((key) =>
+            h(Pill, {
+              key, active: ticketFilter === key, 'aria-label': copy[key], 'aria-pressed': ticketFilter === key,
+              onClick: () => { setTicketFilter(key); setSelectedTicketId(null) },
+            }, copy[key] + ' ' + (key === 'all' ? modularCount(records.total, copy) : modularCount(records.counts && records.counts[key], copy))))),
+          selectedTicket ? h('div', { className: 'dt-column' },
+            h('div', { className: 'dt-page-head' },
+              h(Btn, { variant: 'ghost', size: 'sm', icon: h(Icon, { name: 'chevron-left' }), 'aria-label': copy.back, onClick: () => setSelectedTicketId(null) }, copy.back),
+              h('h1', { className: 'dt-title' }, selectedTicket.id),
+              h(StageMark, { ...stageProps(selectedTicket.status), label: modularState(selectedTicket.status, copy) })),
+            h(KeyValues, { rows: [
+              [copy.currentTicket, h('span', { className: 'dt-mono' }, selectedTicket.id)],
+              ['Thread', h('span', { className: 'dt-mono' }, modularValue(selectedTicket.threadKey, copy))],
+              [copy.session, selectedTicket.ownerSessionId ? h('span', null,
+                h('span', { className: 'dt-mono' }, selectedTicket.ownerSessionId), ' ',
+                h(Btn, { size: 'sm', variant: 'ghost', 'aria-label': copy.openSession, disabled: !onOpenSession, onClick: () => onOpenSession(selectedTicket.ownerSessionId) }, copy.openSession)) : modularValue(selectedTicket.ownerSessionId, copy)],
+              [copy.assignment, modularValue(selectedTicket.assignmentId, copy)],
+              [copy.workdir, h('span', { className: 'dt-mono' }, modularValue(selectedTicket.workdir, copy))],
+              [copy.resumes, modularCount(selectedTicket.resumeCount, copy)],
+              [copy.history, modularCount(selectedTicket.historyCount, copy)],
+              [copy.createdAt, modularValue(selectedTicket.createdAt, copy)],
+              [copy.updatedAt, modularValue(selectedTicket.updatedAt, copy)],
+              [copy.endedAt, modularValue(selectedTicket.endedAt, copy)],
+              [copy.endReason, modularValue(selectedTicket.endReason, copy)],
+            ] }),
+            h('div', { className: 'dt-danger-zone' },
+              h('span', { className: 'dt-hint' }, selectedTicket.id),
+              h('div', { className: 'dt-ticket-actions' }, actionButtons(selectedTicket.id, selectedTicket.status))))
+            : records.records === null || records.records === undefined
+              ? h(Hint, null, copy.recordsUnknown)
+              : visibleTickets.length === 0
+                ? h(Hint, null, ticketRows.length === 0 ? copy.recordsEmpty : copy.filterEmpty)
+                : h('ul', { className: 'dt-list' }, visibleTickets.map((record, index) => {
+                  const ticketId = record && record.id
+                  return h('li', { key: ticketId || index, className: 'dt-row dt-ticket', 'data-state': record && record.status === 'assigned' ? 'ongoing' : 'idle' },
+                    h('div', { className: 'dt-ticket-stage' }, h(StageMark, { ...stageProps(record && record.status), label: modularState(record && record.status, copy) })),
+                    h('div', { className: 'dt-ticket-body' },
+                      h('div', { className: 'dt-row-title' },
+                        h('button', { type: 'button', className: 'dt-open', 'aria-label': ticketId || copy.unknown, onClick: () => setSelectedTicketId(ticketId) }, ticketId || copy.unknown)),
+                      h('div', { className: 'dt-row-meta' },
+                        h('span', null, (record && record.threadKey) || copy.unknown),
+                        h('span', null, copy.resumes + ' ' + modularCount(record && record.resumeCount, copy)),
+                        h('span', null, copy.history + ' ' + modularCount(record && record.historyCount, copy))),
+                      h('div', { className: 'dt-ticket-actions' }, actionButtons(ticketId, record && record.status))))
+                }))),
+
+        h(Section, { title: copy.execution, count: modularCount(execution.activeCount, copy) },
+          h(Hint, null, copy.executionIntro),
+          h('div', { className: 'dt-row-meta dt-status-line' },
+            h('span', { className: 'dt-status-text', 'data-state': execution.paused === true ? 'warning' : current ? 'ongoing' : 'idle' },
+              execution.paused === true ? copy.processingPaused : current ? copy.executorRunning : copy.executionIdle),
+            h(LabelValue, { label: copy.running, value: modularCount(execution.running, copy) + ' / ' + modularCount(execution.maxWorkers, copy) }),
+            h(LabelValue, { label: copy.queued, value: modularCount(execution.queued, copy) }),
+            available('pauseProcessing') ? h(ConfirmButton, {
+              variant: 'outline', size: 'sm', label: execution.paused === true ? copy.resumeProcessing : copy.pauseProcessing,
+              confirmLabel: copy.confirm, title: execution.paused === true ? copy.resumeProcessing : copy.pauseProcessing,
+              message: copy.pauseMessage,
+              onConfirm: () => perform('pauseProcessing', [!execution.paused], { paused: !execution.paused }),
+            }) : null),
+          !current && !assignment ? h(Hint, null, execution.total === null || execution.total === undefined ? copy.executionUnknown : copy.executionEmpty) : null,
+          h(KeyValues, { rows: [
+            [copy.currentTicket, current && current.id ? current.id : execution.total === null || execution.total === undefined ? copy.unknown : copy.none],
+            [copy.assignment, assignment && assignment.id ? assignment.id : execution.total === null || execution.total === undefined ? copy.unknown : copy.none],
+            [copy.session, assignment ? modularValue(assignment.sessionId, copy) : execution.total === 0 ? copy.none : copy.unknown],
+            [copy.paused, execution.paused === true ? copy.yes : execution.paused === false ? copy.no : copy.unknown],
+          ] }),
+          currentTicketId ? h('div', { className: 'dt-actions' }, actionButtons(currentTicketId, (current && current.status) || (assignment && assignment.status))) : null),
+
+        h(Section, { title: copy.health, count: modularCount(deployment.counts && deployment.counts.total, copy) },
+          h(KeyValues, { rows: [
+            [copy.status, modularState(deployment.status, copy)],
+            [copy.stateDir, modularValue(deployment.stateDir, copy)],
+          ] }),
+          deployment.problem !== null && deployment.problem !== undefined
+            ? h('div', { className: 'dt-banner dt-danger' }, copy.problem + ': ' + modularValue(deployment.problem, copy)) : null,
+          deployment.health === null || deployment.health === undefined
+            ? h(Hint, null, copy.healthUnknown)
+            : healthRows.length === 0
+              ? h(Hint, null, copy.healthEmpty)
+              : h('ul', { className: 'dt-list' }, healthRows.map((entry, index) => h('li', {
+                key: (entry && entry.name) || index, className: 'dt-row',
+              },
+                h('div', { className: 'dt-row-main' },
+                  h('div', { className: 'dt-row-title' },
+                    h(StateDot, { state: entry && entry.state === 'ready' ? 'done' : entry && entry.state === 'error' ? 'error' : entry && entry.state === 'starting' ? 'ongoing' : 'idle' }),
+                    h('span', { className: 'dt-row-name' }, (entry && entry.name) || copy.unknown),
+                    h(Tag, { tone: entry && entry.state === 'error' ? 'danger' : entry && entry.state === 'ready' ? 'success' : 'outline' }, modularState(entry && entry.state, copy))),
+                  h('div', { className: 'dt-row-meta' },
+                    h('span', null, (entry && (entry.code || entry.detail)) || copy.none),
+                    entry && entry.at ? h('time', { dateTime: entry.at, title: entry.at }, entry.at) : null)))))),
+
+        h(Section, {
+          title: copy.outbox, count: modularCount(outbox.total, copy),
+          action: h(Btn, { size: 'sm', variant: 'outline', 'aria-label': copy.flush, disabled: !available('flush'), onClick: () => perform('flush') }, copy.flush),
+        },
+          h('div', { className: 'dt-row-meta' }, ['pending', 'sending', 'sent', 'failed', 'gone'].map((key) =>
+            h(Tag, { key, tone: key === 'failed' ? 'danger' : key === 'sent' ? 'success' : 'outline' },
+              copy[key] + ' ' + modularCount(outbox.counts && outbox.counts[key], copy)))),
+          outbox.records === null || outbox.records === undefined
+            ? h(Hint, null, copy.outboxUnknown)
+            : outboxRows.length === 0
+              ? h(Hint, null, copy.outboxEmpty)
+              : h('ul', { className: 'dt-list' }, outboxRows.map((message, index) => h('li', {
+                key: (message && message.id) || index, className: 'dt-row',
+              },
+                h('div', { className: 'dt-row-main' },
+                  h('div', { className: 'dt-row-title' },
+                    h(StateDot, { state: message && message.status === 'failed' ? 'error' : message && message.status === 'sent' ? 'done' : message && message.status === 'sending' ? 'ongoing' : 'idle' }),
+                    h('span', { className: 'dt-row-name' }, (message && message.id) || copy.unknown),
+                    h(Tag, { tone: message && message.status === 'failed' ? 'danger' : message && message.status === 'sent' ? 'success' : 'outline' }, modularState(message && message.status, copy))),
+                  h('div', { className: 'dt-row-meta' },
+                    h('span', null, (message && message.ticketId) || copy.unknown),
+                    h('span', null, copy.attempts + ' ' + modularCount(message && message.attempts, copy))),
+                  message && message.lastError ? h('div', { className: 'dt-error', role: 'alert' }, message.lastError) : null,
+                  message && message.body ? h('div', { className: 'dt-row-quote', title: message.body }, message.body) : null))))),
+
+        h(Section, { title: copy.draft },
+          draft
+            ? h(ModularDraft, {
+              key: 'modular-draft-' + String(draftTicketId || 'unknown'), draft, ticketId: draftTicketId, copy,
+              onSave: available('save') ? (body, context) => perform('save', [body, context], context) : null,
+              onClear: available('clear') ? (context) => perform('clear', [context], context) : null,
+            })
+            : h(Hint, null, copy.draftUnknown)))
     }
 
     // 官方 Modal 的键盘行为：Escape 关闭 + Tab 焦点陷阱 + 关闭后焦点回到触发元素。
@@ -1716,7 +2141,7 @@ window.__ModuleLoader__.load({
     const PanelModal = hostUi ? hostUi.Modal : Modal
 
     /** 确认层与触发器分离：DSH orbit 关闭后，同一个本地 Modal 仍能由 StatusOrbit 持有。 */
-    function ConfirmDialog({ open, label, confirmLabel = '确定执行', title = confirmLabel, message, onConfirm, onClose, modalContext = 'panel', ButtonComponent = Btn, danger = true, preventDismissOnBusy = false, error = null, busyLabel = confirmLabel, busyHint = '安装进行中，完成后才能关闭' }) {
+    function ConfirmDialog({ open, label, confirmLabel = '确定执行', cancelLabel = '取消', title = confirmLabel, message, onConfirm, onClose, modalContext = 'panel', ButtonComponent = Btn, danger = true, preventDismissOnBusy = false, error = null, busyLabel = confirmLabel, busyHint = '安装进行中，完成后才能关闭' }) {
       const [busy, setBusy] = useState(false)
       const busyRef = useRef(false)
       const dismiss = () => {
@@ -1752,7 +2177,7 @@ window.__ModuleLoader__.load({
         description: message || ('确定要执行「' + label + '」操作吗？'),
         onClose: dismiss,
         footer: h(React.Fragment, null,
-          h(ButtonComponent, { variant: 'ghost', disabled: preventDismissOnBusy && busy, onClick: dismiss }, '取消'),
+          h(ButtonComponent, { variant: 'ghost', disabled: preventDismissOnBusy && busy, onClick: dismiss }, cancelLabel),
           h(ButtonComponent, {
             variant: 'primary',
             className: cx(danger && 'dt-danger', busy && 'dt-btn-busy'),
@@ -1765,7 +2190,7 @@ window.__ModuleLoader__.load({
     }
 
     /** 官方 ConfirmButton 动线：触发按钮只开 Modal，取消不执行，确认期间 busy 防重复。 */
-    function ConfirmButton({ label, confirmLabel = '确定执行', title = confirmLabel, message, onConfirm, variant = 'ghost', icon, size, modalContext = 'panel', ButtonComponent = Btn, danger = true, preventDismissOnBusy = false, error = null, busyLabel = confirmLabel, busyHint, onOpen }) {
+    function ConfirmButton({ label, confirmLabel = '确定执行', cancelLabel = '取消', title = confirmLabel, message, onConfirm, variant = 'ghost', icon, size, disabled = false, modalContext = 'panel', ButtonComponent = Btn, danger = true, preventDismissOnBusy = false, error = null, busyLabel = confirmLabel, busyHint, onOpen }) {
       const [open, setOpen] = useState(false)
       const close = useCallback(() => setOpen(false), [])
       return h(React.Fragment, null,
@@ -1774,14 +2199,15 @@ window.__ModuleLoader__.load({
           size,
           icon,
           'aria-label': label,
-          'aria-haspopup': 'dialog',
+          'aria-haspopup': 'dialog', ...(disabled ? { disabled: true } : {}),
           onClick: () => {
+            if (disabled) return
             // 打开前先跑调用方的清理（例如清掉上一次「删除失败」）；打开行为本身不变。
             if (typeof onOpen === 'function') onOpen()
             setOpen(true)
           },
         }, label),
-        h(ConfirmDialog, { open, label, confirmLabel, title, message, onConfirm, onClose: close, modalContext, ButtonComponent, danger, preventDismissOnBusy, error, busyLabel, busyHint }))
+        h(ConfirmDialog, { open, label, confirmLabel, cancelLabel, title, message, onConfirm, onClose: close, modalContext, ButtonComponent, danger, preventDismissOnBusy, error, busyLabel, busyHint }))
     }
 
     const watcherId = (w) => (w && w.id) || String((w && w.repo) || '') + '#' + String((w && w.sessionId) || '')
@@ -1824,6 +2250,7 @@ window.__ModuleLoader__.load({
       if (!w) return 'paused'
       // 历史数据里可能残留「gh: HTTP 304」这类不是错误的记录 —— 不把它当异常
       if (w.lastError && !/HTTP 304|304 Not Modified/i.test(String(w.lastError))) return 'error'
+      if (w.poll && POLL_STALE_TEXT[w.poll]) return 'error'
       if (w.enabled === false) return 'paused'
       // 设了活跃时段、而此刻在窗口外：它其实不会唤醒，只是把条目攒着 ——
       // 这时候还标「主理中」就是在骗人（2026-11-02 用户截图指出）。
@@ -1897,6 +2324,22 @@ window.__ModuleLoader__.load({
           opacity: empty ? 0.38 : 0.9,
         }, breathe),
         h('g', null, spin, dots))
+    }
+
+    // 官方品牌鲸鱼（assets/brand/whale-dark.svg）：只取主轮廓与尾鳍两段子路径。
+    // 官方 path 还带眼睛和腹部纹理，16px 缩到一行时会糊成一团；去掉细节后是一笔清楚的线稿。
+    // 用 stroke 描边、不填色，也不引入位图或底色 —— 头部入口、左栏与右栏标题都用它当品牌标记。
+    const WHALE_PATH = 'M48.8354 10.0479C48.3232 9.79199 48.1025 10.2798 47.8032 10.5278C47.7007 10.6079 47.6143 10.7119 47.5273 10.8076C46.7793 11.624 45.9048 12.1597 44.7622 12.0957C43.0923 12 41.666 12.5356 40.4058 13.8398C40.1377 12.2319 39.2476 11.272 37.8926 10.6558C37.1836 10.3359 36.4668 10.0156 35.9702 9.31982C35.6235 8.82373 35.5293 8.27197 35.356 7.72754C35.2456 7.3999 35.1353 7.06396 34.7651 7.00781C34.3633 6.94385 34.2056 7.2876 34.0479 7.57568C33.418 8.75195 33.1733 10.0479 33.1973 11.3599C33.2524 14.312 34.4736 16.6641 36.8999 18.3359C37.1758 18.5278 37.2466 18.7197 37.1597 19C36.9946 19.5757 36.7974 20.1357 36.624 20.7119C36.5137 21.0801 36.3486 21.1597 35.9624 21C34.6309 20.4321 33.481 19.5918 32.4644 18.5757C30.7393 16.8721 29.1792 14.9917 27.2334 13.52C26.7764 13.1758 26.3193 12.856 25.8467 12.5518C23.8618 10.584 26.1069 8.96777 26.627 8.77588C27.1704 8.57568 26.8159 7.8877 25.0591 7.896C23.3022 7.90381 21.6953 8.50391 19.647 9.30371C19.3477 9.42383 19.0322 9.51172 18.7095 9.58398C16.8501 9.22363 14.9199 9.14355 12.9033 9.37598C9.10596 9.80762 6.07275 11.6396 3.84326 14.7681C1.16455 18.5278 0.53418 22.7998 1.30664 27.2559C2.11768 31.9521 4.46582 35.8398 8.07373 38.8799C11.8159 42.0322 16.1255 43.5762 21.041 43.2803C24.0269 43.104 27.3516 42.6963 31.1016 39.4561C32.0469 39.936 33.0396 40.1279 34.686 40.272C35.9546 40.3921 37.1758 40.208 38.1211 40.0078C39.6021 39.688 39.4995 38.2881 38.9639 38.0322C34.623 35.9678 35.5762 36.8081 34.71 36.1279C36.9155 33.4639 40.2402 30.6958 41.54 21.728C41.6426 21.0161 41.5557 20.5679 41.54 19.9917C41.5322 19.6396 41.6108 19.5039 42.0049 19.4639C43.0923 19.3359 44.1479 19.0317 45.1167 18.4878C47.9292 16.9199 49.064 14.3438 49.3315 11.2559C49.3711 10.7837 49.3237 10.2959 48.8354 10.0479ZM32.6064 27.8799C32.2046 28.0479 31.8027 28.1919 31.4165 28.208C30.8179 28.2397 30.1641 27.9922 29.8096 27.688C29.2583 27.2158 28.8643 26.9521 28.6987 26.1279C28.6279 25.7759 28.6675 25.2319 28.7305 24.9199C28.8721 24.248 28.7144 23.8159 28.2495 23.4238C27.8716 23.104 27.3911 23.0161 26.8633 23.0161C26.666 23.0161 26.4849 22.9277 26.3511 22.856C26.1304 22.7441 25.9492 22.4639 26.1226 22.1201C26.1777 22.0078 26.4458 21.7358 26.5088 21.688C27.2256 21.272 28.0527 21.4077 28.8169 21.7197C29.5259 22.0161 30.0615 22.5601 30.834 23.3281C31.6216 24.2559 31.7632 24.5117 32.2124 25.208C32.5669 25.752 32.8901 26.312 33.1104 26.9521C33.2446 27.3521 33.0713 27.6802 32.6064 27.8799Z'
+
+    function DeepSeekWhaleMark(props = {}) {
+      const size = Number(props.size) || 16
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 50 50', fill: 'none',
+        'aria-hidden': 'true', style: { overflow: 'visible' },
+      }, h('path', {
+        d: WHALE_PATH, fill: 'none', stroke: 'currentColor',
+        strokeWidth: 2.8, strokeLinejoin: 'round', strokeLinecap: 'round',
+      }))
     }
 
     const notedOnce = new Set()
@@ -1992,7 +2435,9 @@ window.__ModuleLoader__.load({
       if (!match) return { main: value, hint: '' }
       return { main: value.slice(0, match.index).trim(), hint: match[0].trim() }
     }
-    function StatusOrbit() {
+    function StatusOrbit(props = {}) {
+      // Dock 的 session slot 已提供当前 sessionId；右栏打开动作只传 kind。
+      const canOpenRight = Boolean(props.sessionId && hostSidebarRight && typeof hostSidebarRight.openTab === 'function')
       const [watchers, setWatchers] = useState(null)
       // 写操作的失败提示（M4）：为空表示没有错误
       const [orbitError, setOrbitError] = useState(null)
@@ -2120,6 +2565,15 @@ window.__ModuleLoader__.load({
         setOpen((value) => !value)
       }
 
+      const openRight = async () => {
+        try {
+          await openSessionSuperagentTab()
+          setOrbitError(null)
+        } catch (error) {
+          setOrbitError('打开本会话右栏失败：' + String((error && error.message) || error))
+        }
+      }
+
       const button = h('button', {
         ref: btnRef,
         type: 'button',
@@ -2129,9 +2583,9 @@ window.__ModuleLoader__.load({
             ? list.map((w) => (w.repo + ' · ' + (w.title || '未命名会话') + ' · ' + sessionTag(w.sessionId) + ' · ' + STATE_TEXT[orbitStateOf(w)])).join('\n')
             : '还没有' + brandName + ' —— 在「' + brandName + '」页加一条',
         'aria-label': summary,
-        'aria-expanded': open ? 'true' : 'false',
+        'aria-expanded': canOpenRight ? undefined : open ? 'true' : 'false',
         className: cx('dt-btn', 'dt-btn-ghost', 'sa-orbit-trigger', watchers === null && 'is-loading'),
-        onClick: toggle,
+        onClick: canOpenRight ? openRight : toggle,
       }, h(OrbitMark, { watchers: list }))
 
       // DSH 固定业务宽度 252/368，坐标全部交给 useAnchoredPosition；只有 fallback 保留视口夹紧与手算 bottom。
@@ -2197,6 +2651,7 @@ window.__ModuleLoader__.load({
         const parts = [whoName(w) + whoId(w), '每 ' + (Number(w.intervalSec) || 60) + 's']
         // ageText 自己已经带「前」（「76 秒前」），别再拼一个 —— 真机上显示成「76 秒前前」
         if (w.lastPoll) parts.push(ageText(w.lastPoll))
+        if (w.poll && POLL_STALE_TEXT[w.poll]) parts.push(POLL_STALE_TEXT[w.poll])
         if (w.activeHours) parts.push('时段 ' + w.activeHours)
         return parts.join(' · ')
       }
@@ -2334,6 +2789,10 @@ window.__ModuleLoader__.load({
         // 读失败与写操作失败分开说；旧列表仍可保留在错误上方。
         readError ? h('div', { className: 'sa-dock-err', role: 'alert' }, readError) : null,
         !readError && orbitError ? h('div', { className: 'sa-dock-err', role: 'alert' }, '操作失败：' + orbitError) : null,
+        !canOpenRight ? h('div', { className: 'sa-dock-foot', role: 'status' },
+          !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
+            ? '宿主 sidebarRight 服务不存在；已保留旧操作列表。'
+            : '当前 Dock 没有 sessionId；已保留旧操作列表，未读取右栏。') : null,
         list.length > 0
           ? h('div', { className: 'sa-dock-foot' }, '详细状态与凭证在「' + brandName + '」标签页')
           : null)
@@ -2380,11 +2839,12 @@ window.__ModuleLoader__.load({
     // ── 官方 GUI 的三个交互件（移植自 src/client/provider.tsx + draft.tsx + src/client/controls.tsx）──
 
     /** 轮询：可见时按 interval，隐藏时降频 6 倍；上一轮没跑完就跳过；卸载时清干净。 */
-    function usePoll(task, intervalMs = POLL_MS) {
+    function usePoll(task, intervalMs = POLL_MS, enabled = true) {
       const ref = useRef(task)
       ref.current = task
       const busy = useRef(false)
       useEffect(() => {
+        if (!enabled) return undefined
         let alive = true
         let timer = null
         let discovered = false
@@ -2405,7 +2865,7 @@ window.__ModuleLoader__.load({
         }
         step()
         return () => { alive = false; if (timer) clearTimeout(timer) }
-      }, [intervalMs])
+      }, [intervalMs, enabled])
     }
 
     /** 轻量 Toast：DSH 可用时由宿主计时；fallback 保留 4 秒自动消失。 */
@@ -3240,8 +3700,11 @@ window.__ModuleLoader__.load({
           : null)
     }
 
-    function ZhuliPanel(props) {
-      const sessionId = props && props.sessionId
+    function SuperagentPage(props = {}) {
+      // 同一个领域页面服务两个宿主容器；scope 只决定数据范围，不复制 watcher/Ticket/草稿动作。
+      const scope = props.scope === 'global' ? 'global' : 'session'
+      const sessionId = scope === 'session' ? props.sessionId : null
+      const missingSession = scope === 'session' && !sessionId
       /** 暂停原因码 → 人话（服务端 deferReason 是唯一来源）。 */
       const DEFER_LABELS = {
         'active-hours': '不在活跃时段',
@@ -3257,6 +3720,36 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('overview')
       const [notice, setNotice] = useState(null)
       const [form, setForm] = useState({ ...CREATE_WATCHER_VALUES })
+      // 全局新建复用现有 form 状态，不新增位置化 hook；目标 sessionId 只进入新建请求。
+      const createSessionId = scope === 'global' ? String(form.createSessionId || '') : sessionId
+      let sessionCatalog = null
+      let sessionCatalogMessage = null
+      let sessionCatalogIds = []
+      if (scope === 'global') {
+        try {
+          if (!hostSessions || !hostSessions.list || typeof hostSessions.list.getSnapshot !== 'function') {
+            sessionCatalogMessage = '宿主 sessions catalog 不可用，无法选择目标会话。'
+          } else {
+            sessionCatalog = hostSessions.list.getSnapshot()
+            const byId = sessionCatalog && sessionCatalog.byId && typeof sessionCatalog.byId === 'object' ? sessionCatalog.byId : {}
+            sessionCatalogIds = Object.keys(byId).sort()
+            if (sessionCatalog.phase === 'error') {
+              sessionCatalogMessage = '会话目录读取失败：' + String(sessionCatalog.error || '未知错误')
+            } else if (sessionCatalog.phase !== 'ready') {
+              sessionCatalogMessage = '正在读取会话目录…'
+            } else if (sessionCatalogIds.length === 0) {
+              sessionCatalogMessage = '会话目录为空，无法新建 watcher。'
+            }
+          }
+        } catch (error) {
+          sessionCatalog = null
+          sessionCatalogMessage = '会话目录读取失败：' + String((error && error.message) || error)
+        }
+      }
+      const createSessionReady = scope === 'session'
+        ? Boolean(sessionId)
+        : Boolean(sessionCatalog && sessionCatalog.phase === 'ready'
+          && createSessionId && sessionCatalog.byId && sessionCatalog.byId[createSessionId])
       const [token, setToken] = useState('')
       const [goalDraft, setGoalDraft] = useState('')
       const [goalTouched, setGoalTouched] = useState(false)
@@ -3379,9 +3872,12 @@ window.__ModuleLoader__.load({
       // 记下最新一次的 promise：被顶掉就等它，用最新快照回话；它真失败时仍然按失败返回。
       const latestLoadRef = useRef(null)
       const load = useCallback(() => {
+        if (missingSession) return Promise.resolve(null)
         const seq = ++loadSeqRef.current
         const job = (async () => {
-          const statePath = sessionId ? '/state?sessionId=' + encodeURIComponent(String(sessionId)) : '/state'
+          const statePath = scope === 'global'
+            ? '/state?scope=global'
+            : '/state?sessionId=' + encodeURIComponent(String(sessionId))
           const etag = readStateEtag(statePath)
           try {
             const payload = await call(statePath, etag ? { headers: { 'if-none-match': etag } } : undefined)
@@ -3417,10 +3913,24 @@ window.__ModuleLoader__.load({
         })()
         latestLoadRef.current = job
         return job
-      }, [sessionId])
+      }, [sessionId, scope, missingSession])
 
       useEffect(() => { ensurePortedCss() }, [])
-      usePoll(load, POLL_MS)
+      usePoll(load, POLL_MS, !missingSession)
+      useEffect(() => {
+        if (scope !== 'global' || !hostSessions || !hostSessions.list
+          || typeof hostSessions.list.getSnapshot !== 'function' || typeof hostSessions.refresh !== 'function') return undefined
+        let current
+        try { current = hostSessions.list.getSnapshot() } catch { return undefined }
+        if (current.phase === 'ready') return undefined
+        let alive = true
+        Promise.resolve().then(() => hostSessions.refresh())
+          .then(() => { if (alive) load() })
+          .catch((error) => {
+            if (alive) setNotice({ ok: false, text: '会话目录读取失败：' + String((error && error.message) || error) })
+          })
+        return () => { alive = false }
+      }, [scope, load])
 
       const body = snap.body || {}
       // 默认值提示从后端读：写死 12/3/6 会在常量变化后变成谎话（JSON Schema 的 default 也是这个用法）
@@ -3429,6 +3939,25 @@ window.__ModuleLoader__.load({
       const BRAND = (typeof body.brandName === 'string' && body.brandName.trim()) || '主理鱼'
       const ACK_DEFAULTS = body.defaultAckLabels || null
       const watchers = body.watchers || []
+      const modular = body.modular && typeof body.modular === 'object' ? body.modular : null
+      const hasExternalModularActions = Boolean(props.modularActions || typeof props.onModularAction === 'function')
+      // 会话右栏的写操作显式携带 scope，全局动作不绑定某个当前会话。
+      const scopedWriteSessionId = scope === 'session' ? sessionId : null
+      const withWriteScope = (payload) => scopedWriteSessionId ? { ...payload, sessionId: scopedWriteSessionId } : payload
+      const modularActions = {
+        ...(modular && modular.actions === true && !hasExternalModularActions ? {
+          resume: (ticketId) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify(withWriteScope({ action: 'resume', ticketId })) }), '已提交恢复'),
+          stop: (ticketId) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify(withWriteScope({ action: 'stop', ticketId })) }), '已停止 Ticket'),
+          flush: () => run(() => call('/outbox', { method: 'POST', body: JSON.stringify(withWriteScope({})) }), 'Outbox 已刷新'),
+          ...(scope === 'global' ? {
+            // executorPaused 是全局开关；会话右栏不展示这个必然跨 scope 的动作。
+            pauseProcessing: (paused) => run(() => call('/tickets', { method: 'POST', body: JSON.stringify({ action: paused ? 'pause-processing' : 'resume-processing' }) }), paused ? '已暂停 worker' : '已恢复 worker'),
+          } : {}),
+          save: (body, context) => run(() => call('/draft', { method: 'POST', body: JSON.stringify(withWriteScope({ ...context, body })) }), '草稿已保存'),
+          clear: (context) => run(() => call('/draft', { method: 'POST', body: JSON.stringify(withWriteScope({ ...context, clear: true })) }), '草稿已清空'),
+        } : {}),
+        ...(props.modularActions || {}),
+      }
       // 行内编辑只有这一条入口：clean 维持原直达行为；dirty 先确认，取消绝不重置 draft/touched。
       const applyWatcherEditor = (watcher, nextKey) => {
         const values = watcherValuesFrom(watcher, ACK_DEFAULTS)
@@ -3629,7 +4158,7 @@ window.__ModuleLoader__.load({
       }, '已保存：' + watcher.repo, { rethrow: true })
 
       const act = (watcher, action) => run(async () => {
-        await call('/watch', { method: 'POST', body: JSON.stringify({ action, id: watcherId(watcher) }) })
+        await call('/watch', { method: 'POST', body: JSON.stringify(withWriteScope({ action, id: watcherId(watcher) })) })
       }, action === 'delete' ? '已删除 ' + watcher.repo
         : action === 'poll' ? '已触发一次轮询：' + watcher.repo
         // 审核 T24 W6：暂停/恢复成功以前什么都不说，客户不确定点没点上。
@@ -3643,17 +4172,18 @@ window.__ModuleLoader__.load({
         for (const watcher of list) {
           if (action === 'pause' && !watcher.enabled) continue
           if (action === 'resume' && watcher.enabled) continue
-          await call('/watch', { method: 'POST', body: JSON.stringify({ action, id: watcherId(watcher) }) })
+          await call('/watch', { method: 'POST', body: JSON.stringify(withWriteScope({ action, id: watcherId(watcher) })) })
         }
       }, action === 'pause' ? '全部已暂停' : '全部已恢复')
 
       const addWatcher = () => run(async () => {
+        if (!createSessionReady) throw new Error('目标会话不可用：' + (sessionCatalogMessage || '请选择目标会话'))
         const value = { ...CREATE_WATCHER_VALUES, ...form }
         const created = await call('/watch', {
           method: 'POST',
           body: JSON.stringify((() => {
             const valueDirty = (key) => createTouchedRef.current.has(key) || !watcherSameValue(value[key], createSnapshotRef.current[key])
-            const payload = { repo: value.repo.trim(), sessionId }
+            const payload = { repo: value.repo.trim(), sessionId: createSessionId }
             // 监控类型永远提交：它决定服务端 id 前缀（`pr:`），漏了就当 issue 建。
             payload.watchKind = value.watchKind === 'pr' ? 'pr' : 'issue'
             if (payload.watchKind === 'pr') {
@@ -3825,7 +4355,10 @@ window.__ModuleLoader__.load({
             // ack 标签决定这条是否还会被叫醒，不能只在工具参数里出现。
             h(Tag, { tone: 'quiet' }, '回执 ' + (watcher.ackLabel || ackLabelFallback(watcher, ACK_DEFAULTS))),
             watcher.queuedWakes > 0 ? h(Tag, { tone: 'warning' }, '排队 ' + watcher.queuedWakes) : null,
-            backoffText(watcher) ? h(Tag, { tone: 'warning' }, backoffText(watcher)) : null),
+            backoffText(watcher) ? h(Tag, { tone: 'warning' }, backoffText(watcher)) : null,
+            (watcher.poll && POLL_STALE_TEXT[watcher.poll])
+              ? h(Tag, { tone: 'warning' }, POLL_STALE_TEXT[watcher.poll])
+              : null),
           // 三行，各管一件事：① 是谁 ② 节律与最近结果 ③ 目标
           // 原来六段用 ' · ' 串成一行（会话 · 每 60s · 轮询 · 唤醒 · 上次唤醒 · 目标），
           // 出图时那行在浅色主题下折成两行、读起来像一堵墙。
@@ -3996,6 +4529,7 @@ window.__ModuleLoader__.load({
       const matchesBadge = (watcher) => !badgeFilter
         || repoBadges(watcher.repoAccess).some((badge) => badge.text === badgeFilter)
       const hasProblem = (watcher) => Boolean(watcher.lastError)
+        || Boolean(watcher.poll && POLL_STALE_TEXT[watcher.poll])
         || Boolean(watcher.lastReopened)
         || Number(watcher.silentWakes) >= 2
         || Boolean(repoStructureNote(watcher.repoAccess))
@@ -4127,13 +4661,12 @@ window.__ModuleLoader__.load({
               item.text,
               item.action ? h(Btn, { variant: 'link', size: 'sm', 'aria-label': item.action.label, onClick: item.action.onClick }, item.action.label) : null))))
           : null,
-        // 中间态：已经有守、但一次都没唤醒过 —— 这不是"没配置"，是"在等"
+        // 中间态：已经有守、但一次都没唤醒过 —— 这不是"没配置"，是"在等"。
+        // 只留一句。叫醒之后按什么规则处理（AGENTS.md → 修/回/待定 → watch_ack）
+        // 移进「判定」页的问号提示：主面板常驻四行灰字会把右栏挤成一团。
         (watchers.length > 0 && watchers.every((w) => !w.lastWake))
           ? h('div', { className: 'sa-dock-foot', key: 'waiting' },
-            '还没有唤醒过：守会在仓库出现新条目时叫醒这个会话。'
-            + '想先试一次，点行里的「立刻」；如果一直没动静，看上面「需要关注」里有没有被过滤的记录。'
-            + '叫醒之后：会话先读仓库 AGENTS.md → 决定「修 / 回 / 待定」→ 做完写回并 watch_ack 打标签；'
-            + '不做也要说明理由并 ack。每次只处理叫醒消息里列出的那几条，不会扩大范围。')
+            '还没有唤醒过：仓库有新条目就叫醒本会话，点「立刻」可以先试一次。')
           : null,
         // 需要重启：这是"功能看起来没生效"最常见的根因，必须显眼
         (body.installedVersion && body.runningVersion && body.installedVersion !== body.runningVersion)
@@ -4174,6 +4707,8 @@ window.__ModuleLoader__.load({
         count: watchers.reduce((n, w) => n + (w.history || []).length, 0),
         action: h(InfoTip, { text: '每轮判定都会记一条：唤醒、仅观察，或跳过及其原因。只存最近若干条。' }),
       },
+        // 规则说明放这里而不是主面板：主面板只留一句，避免右栏被灰字堆满。
+        h(Hint, { key: 'rules' }, '叫醒后按 AGENTS.md → 修 / 回 / 待定 → 做完写回并 watch_ack；只处理列出的几条，不会扩大范围。'),
         (() => {
           const needle = search.trim()
           // 审核 T40 M3：以前只认纯数字 —— Gitee 的编号是 IKSQJH 这种字符串，
@@ -4394,8 +4929,27 @@ window.__ModuleLoader__.load({
       const trigger = h(Section, { title: '新增' + BRAND },
         h(WatcherForm, {
           mode: 'create', idPrefix: 'watcher-new', value: { ...CREATE_WATCHER_VALUES, ...form },
-          snapshot: createSnapshotRef.current, defaults: DEFAULTS, disabled: !sessionId, sessionId,
-          submitLabel: sessionId ? '添加到当前会话' : '先打开一个会话',
+          snapshot: createSnapshotRef.current, defaults: DEFAULTS, disabled: !createSessionReady, sessionId: createSessionId,
+          submitLabel: scope === 'global'
+            ? (createSessionReady ? '添加到所选会话' : '选择目标会话')
+            : (sessionId ? '添加到当前会话' : '先打开一个会话'),
+          targetControl: scope === 'global' ? (busy) => h(Field, { id: 'watcher-new-session', label: '目标会话' },
+            h(React.Fragment, null,
+              h('select', {
+                id: 'watcher-new-session', className: 'dt-select', 'aria-label': '目标会话',
+                value: createSessionId,
+                disabled: busy || !sessionCatalog || sessionCatalog.phase !== 'ready' || sessionCatalogIds.length === 0,
+                onChange: (event) => setCreateField('createSessionId', event.target.value),
+              },
+                h('option', { value: '' }, '选择目标会话'),
+                sessionCatalogIds.map((id) => {
+                  const item = sessionCatalog.byId[id]
+                  const title = item && (item.title || item.name)
+                  return h('option', { key: id, value: id }, title ? String(title) + ' · ' + id : id)
+                })),
+              sessionCatalogMessage
+                ? h('p', { className: sessionCatalog && sessionCatalog.phase === 'error' ? 'dt-error' : 'dt-hint', role: sessionCatalog && sessionCatalog.phase === 'error' ? 'alert' : undefined }, sessionCatalogMessage)
+                : h('p', { className: 'dt-hint' }, '只用于新建 watcher；不改变全局读取或批量动作范围。'))) : null,
           onChange: setCreateField,
           onSave: addWatcher,
           onDiscard: () => {
@@ -4699,7 +5253,7 @@ window.__ModuleLoader__.load({
           if (watcher.enabled !== false) group.enabled += 1
           if (watcher.lastWake && (!group.lastWake || String(watcher.lastWake) > String(group.lastWake))) group.lastWake = watcher.lastWake
           group.silentWakes = Math.max(group.silentWakes, Number(watcher.silentWakes) || 0)
-          if (watcher.lastError) group.errors += 1
+          if (watcher.lastError || (watcher.poll && POLL_STALE_TEXT[watcher.poll])) group.errors += 1
           for (const badge of repoBadges(watcher.repoAccess) || []) {
             if (!group.badges.some((b) => b.text === badge.text)) group.badges.push(badge)
           }
@@ -4772,13 +5326,23 @@ window.__ModuleLoader__.load({
         return h(Field, { key: label, label, hint, note }, control)
       }
 
+      if (missingSession) {
+        return h('div', { className: 'dt-page' }, h('div', { className: 'dt-column' },
+          h('div', { className: 'dt-card dt-error-card' },
+            h('div', { className: 'dt-card-head' }, h('span', { className: 'dt-card-title' }, '无法打开会话工作台')),
+            h('p', { className: 'dt-error', role: 'alert' }, '右栏 slot 没有提供当前 sessionId；未读取全局数据，也未发出任何会话写操作。'),
+            h(Hint, null, '请从已打开会话的头部入口或 Dock 进入；宿主必须提供真实 sessionId。'))))
+      }
+
       return h('div', { className: 'dt-page' },
         h('div', { className: 'dt-page-head' },
           h('div', null,
             h('h1', { className: 'dt-page-title' }, BRAND),
             h('span', { className: 'dt-hint' },
-              (body.sessionTitle ? '会话：' + body.sessionTitle + ' · ' : '')
-              + (sessionId ? '盯办 + 主动办：仓库有动静就叫醒本会话' : '（在会话里打开本面板，才能把仓库绑到会话上）'))),
+              scope === 'global'
+                ? '全局中枢 · 全部项目会话的 watcher、Ticket、执行、Outbox 与健康'
+                : (body.sessionTitle ? '会话：' + body.sessionTitle + ' · ' : '')
+                  + (sessionId ? '盯办 + 主动办：仓库有动静就叫醒本会话' : '（在会话里打开本面板，才能把仓库绑到会话上）'))),
           h('div', { className: 'dt-toolbar' },
             h(Input, { value: search, placeholder: '搜索仓库 / 编号 / 标题', onChange: (e) => setSearch(e.target.value), 'aria-label': '搜索' }),
             h(Btn, { size: 'sm', variant: 'ghost', icon: h(Icon, { name: 'question' }), onClick: () => setGlossary(true) }, '术语'),
@@ -4811,6 +5375,7 @@ window.__ModuleLoader__.load({
             { value: 'judge', label: '判定', id: 'sa-main-tab-judge', panelId: 'sa-main-panel-judge' },
             { value: 'trigger', label: '触发', id: 'sa-main-tab-trigger', panelId: 'sa-main-panel-trigger' },
             { value: 'settings', label: '设置', id: 'sa-main-tab-settings', panelId: 'sa-main-panel-settings' },
+            ...(modular ? [{ value: 'modular', label: modularCopy(modular.locale).tab, id: 'sa-main-tab-modular', panelId: 'sa-main-panel-modular' }] : []),
           ],
           value: tab, onChange: setTab, label: '主理鱼分区',
         }),
@@ -4841,6 +5406,12 @@ window.__ModuleLoader__.load({
         snap.body && tab === 'settings' ? h('div', {
           id: 'sa-main-panel-settings', role: 'tabpanel', 'aria-labelledby': 'sa-main-tab-settings', className: 'dt-tabpanel',
         }, settings) : null,
+        snap.body && tab === 'modular' && modular ? h('div', {
+          id: 'sa-main-panel-modular', role: 'tabpanel', 'aria-labelledby': 'sa-main-tab-modular', className: 'dt-tabpanel',
+        }, h(ModularView, {
+          data: modular, actions: modularActions, onAction: props.onModularAction,
+          onOpenSession: (props.onOpenSession || hostOpenSession) ? (id) => run(() => (props.onOpenSession || hostOpenSession)(id), '已打开 Session') : null,
+        })) : null,
         glossary && glossary.type === 'watcher-draft' ? h(ConfirmDialog, {
           open: true,
           label: '放弃未保存的修改',
@@ -4892,82 +5463,277 @@ window.__ModuleLoader__.load({
     }
 
 
+    function SuperagentGlobalPage(props = {}) {
+      return h(SuperagentPage, { ...props, scope: 'global' })
+    }
+
+    function SuperagentSessionPage(props = {}) {
+      // sessionId 只从右栏 session slot 读取，不从 URL、watcher 或全局状态猜测。
+      return h(SuperagentPage, { ...props, scope: 'session' })
+    }
+
+    function SuperagentNavIcon() {
+      // 品牌用官方 DeepSeek 鲸鱼线稿；轨道环只留在面板内部表达每条守的状态，不再当入口图标。
+      return h(DeepSeekWhaleMark, { size: 16 })
+    }
+
+    function SuperagentHeaderUtility(props = {}) {
+      const [error, setError] = useState(null)
+      const [pressed, setPressed] = useState(() => Boolean(visibleSessionRightTab(props.sessionId)))
+      useEffect(() => {
+        if (!canToggleSessionRightTab()) return undefined
+        const update = () => setPressed(Boolean(visibleSessionRightTab(props.sessionId)))
+        const unsubscribe = hostSidebarRight.view.subscribe(update)
+        update()
+        return typeof unsubscribe === 'function' ? unsubscribe : undefined
+      }, [props.sessionId])
+      const unavailable = !props.sessionId
+        ? '当前头部 slot 没有 sessionId'
+        : !hostSidebarRight || typeof hostSidebarRight.openTab !== 'function'
+          ? RIGHT_TAB_UNAVAILABLE
+          : !hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function'
+            ? RIGHT_TAB_DEFINITION_UNAVAILABLE
+            : null
+      const toggle = async () => {
+        if (unavailable) return
+        try {
+          const tab = pressed ? visibleSessionRightTab(props.sessionId) : null
+          if (tab) await hostSidebarRight.hide(tab.id)
+          else await openSessionSuperagentTab()
+          setError(null)
+        } catch (failure) {
+          setError(String((failure && failure.message) || failure))
+        }
+      }
+      const label = '本会话的主理鱼'
+      const tip = unavailable || label
+      // 官方 Forge 头部入口不传 variant：默认 ghost 就是无底色，只有按下态才给
+      // interactive-bg-active。之前传 toolbar，命中安装版 Button 的填充 variant，
+      // 于是真机上多出一块深色圆角底 —— 这就是"不像原生"的来源。
+      // DSH Tooltip 要把 ref 合并到真实 trigger；本地 Btn 是普通函数，不能接住 ref。
+      // 两个能力同时存在时直接用官方 forwardRef Button，缺任一项就显式回退 title。
+      const useHostTooltip = Boolean(hostTooltipPrimitive && hostButton)
+      const shared = {
+        'aria-label': label, 'aria-pressed': pressed,
+        title: useHostTooltip ? undefined : tip,
+        disabled: Boolean(unavailable), onClick: toggle,
+      }
+      const button = hostButton
+        ? h(hostButton, { type: 'button', variant: 'ghost', size: 'sm', icon: h(SuperagentNavIcon), className: 'dt-header-entry dt-header-entry-host', ...shared })
+        : h('button', { type: 'button', className: 'dt-header-entry', ...shared }, h(SuperagentNavIcon))
+      return h(React.Fragment, null,
+        useHostTooltip ? h(hostTooltipPrimitive, { label: tip, side: 'bottom', openOnClick: true }, button) : button,
+        error ? h('span', { className: 'dt-error', role: 'alert' }, '切换右栏失败：' + error) : null)
+    }
+
+    function SuperagentRightTabTitle() {
+      return h(React.Fragment, null, h(SuperagentNavIcon), h('span', null, tabNameLabel()))
+    }
+
+    let hostOpenSession = null
     return {
       inject: ['slots'],
       apply(ctx) {
+        hostLayout = optionalHostService(ctx, 'layout')
+        hostSidebarRight = optionalHostService(ctx, 'sidebarRight')
+        hostSidebarRightTabs = optionalHostService(ctx, 'sidebarRightTabs')
+        hostSessions = optionalHostService(ctx, 'sessions')
         try { noteOnce('client-version', CLIENT_VERSION) } catch {}
         try { note('apply', 'start') } catch {}
         // 样式表在这里注入一次就够了：任何槽位（面板 / 圆环 / 将来的入口）都用得上。
         // 之前只在面板组件挂载时注入，没打开过面板就直接点圆环 → 弹层没有样式（0.9.159 才补上那次调用）。
         try { ensurePortedCss() } catch {}
 
-        // ① the 主理鱼 tab in the centre-column view ring
-        //    页签名可设置（本地显示覆盖 > /state.brandName > 默认「主理鱼」）。
-        //    宿主只在 register/dispose 时重算文案，所以改名走「先释放、再同 id/order/component
-        //    重注册」—— 先 dispose 保证列表里不会出现第二条同 id 的注册。
+        // 品牌名同时驱动左栏、右栏 definition 与右栏标题。旧中栏删除后，
+        // 改名订阅仍保留在这些存活入口上：先释放原注册，再按同 id/key/component 重注册。
         tabNameOverride = readTabNameOverride()
-        ctx.effect(() => {
+        const mountBrandEntry = (mount, failureKey) => {
+          let dispose = null
+          const unmount = () => {
+            if (!dispose) return
+            const current = dispose
+            dispose = null
+            try { current() } catch {}
+          }
+          const remount = () => {
+            unmount()
+            dispose = mount()
+          }
           try {
-            return ctx.slots.inject('conversation.view', () => {
-              let disposeDesk = null
-              const mountDesk = () => {
-                disposeDesk = ctx.slots.register({
-                  name: 'conversation.view',
-                  id: 'session-superagent-desk',
-                  order: 30,
-                  label: tabNameLabel(),
-                }, ZhuliPanel)
+            remount()
+            const stopWatching = subscribeTabName(() => {
+              try { remount() } catch (error) {
+                note(failureKey, String((error && error.message) || error))
               }
-              const unmountDesk = () => {
-                if (!disposeDesk) return
-                const dispose = disposeDesk
-                disposeDesk = null
-                try { dispose() } catch {}
-              }
-              mountDesk()
-              note('desk-registered', 'ok')
-              const stopWatching = subscribeTabName(() => {
-                try {
-                  unmountDesk()
-                  mountDesk()
-                  note('desk-registered', 'renamed')
-                } catch (error) {
-                  note('desk-fail', String((error && error.message) || error))
-                }
-              })
-              // 同一浏览器的其它页面（另一标签页 / 另一个窗口）改了名字：storage 事件只当触发器，
-              // 真值一律回 localStorage 读最新的 —— 别人设了**新名字**要跟着同步，不能清掉覆盖回品牌名；
-              // 只有对方删除（newValue === null）才回品牌名。
-              const onStorage = (event) => {
-                if (!event) return
-                // localStorage.clear() 的事件 key 是 null —— 那是「所有覆盖都没了」，按删除处理。
-                const cleared = event.key === null || event.key === undefined
-                if (!cleared && event.key !== TAB_NAME_STORAGE_KEY) return
-                const before = tabNameLabel()
-                tabNameOverride = (cleared || event.newValue === null || event.newValue === undefined)
-                  ? null
-                  : readTabNameOverride()
-                if (tabNameLabel() === before) return
-                try { notifyTabName(before) } catch {}
-              }
-              try {
-                if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-                  window.addEventListener('storage', onStorage)
-                }
-              } catch {}
-              return () => {
-                stopWatching()
-                try {
-                  if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-                    window.removeEventListener('storage', onStorage)
-                  }
-                } catch {}
-                unmountDesk()
+            })
+            const cleanup = () => { stopWatching(); unmount() }
+            // 宿主服务可能比本插件晚就绪：记下 remount，服务到位后重挂一次，
+            // 让入口用「服务已可用」的新状态渲染（否则真机会一直显示禁用）。
+            cleanup.remount = remount
+            return cleanup
+          } catch (error) {
+            note(failureKey, String((error && error.message) || error))
+            unmount()
+            return undefined
+          }
+        }
+        const openSession = async (id) => {
+          const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : ctx.sessions
+          const uiWorkspace = typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : ctx.uiWorkspace
+          if (!sessions || !uiWorkspace || !sessions.list) throw new Error('Session navigation unavailable')
+          if (sessions.list.getSnapshot().phase !== 'ready' || !sessions.list.getSnapshot().byId[id]) await sessions.refresh()
+          const catalog = sessions.list.getSnapshot()
+          if (catalog.phase !== 'ready') throw new Error('Session catalog is not ready')
+          if (!catalog.byId[id]) throw new Error('Session is not listed: ' + id)
+          uiWorkspace.openSession(id)
+        }
+        hostOpenSession = openSession
+
+        // 左侧全局中枢：main 与 sidebar.panellist 使用同一个 panel id。
+        ctx.effect(() => {
+          if (!hostLayout || typeof hostLayout.selectPanel !== 'function') {
+            noteOnce('layout-unavailable', 'layout.selectPanel 服务不存在；不注册无法选择的全局入口')
+            return undefined
+          }
+          try {
+            return ctx.slots.inject('main', () => ctx.slots.register({
+              name: 'main', key: GLOBAL_PANEL_ID,
+            }, SuperagentGlobalPage))
+          } catch (error) {
+            note('global-panel-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+        ctx.effect(() => {
+          if (!hostLayout || typeof hostLayout.selectPanel !== 'function') return undefined
+          return mountBrandEntry(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+            name: 'sidebar.panellist', id: GLOBAL_PANEL_ID, order: 20,
+            label: () => tabNameLabel(),
+          }, SuperagentNavIcon)), 'global-sidebar-fail')
+        })
+
+        // 右栏 page type：definition.id 用于 keyed body/title 分派，definition.kind 用于 openTab。
+        ctx.effect(() => {
+          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') {
+            noteOnce('sidebar-right-tabs-unavailable', 'sidebarRightTabs.register 服务不存在；会话头部入口显示不可用原因')
+            return undefined
+          }
+          return mountBrandEntry(() => hostSidebarRightTabs.register({
+            id: RIGHT_TAB_ID,
+            kind: RIGHT_TAB_KIND,
+            priority: 'builtin',
+            title: () => tabNameLabel(),
+            guide: [{
+              id: 'session-superagent',
+              order: 20,
+              title: () => tabNameLabel(),
+              description: () => '查看当前项目会话的 watcher、Ticket、执行、Outbox 与草稿',
+              icon: SuperagentNavIcon,
+            }],
+          }), 'right-definition-fail')
+        })
+        ctx.effect(() => {
+          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
+          try {
+            return ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+              name: 'sidebar.right.pane.tab', key: RIGHT_TAB_ID,
+            }, SuperagentSessionPage))
+          } catch (error) {
+            note('right-tab-fail', String((error && error.message) || error))
+            return undefined
+          }
+        })
+        ctx.effect(() => {
+          if (!hostSidebarRightTabs || typeof hostSidebarRightTabs.register !== 'function') return undefined
+          return mountBrandEntry(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+            name: 'sidebar.right.pane.tab.title', key: RIGHT_TAB_ID,
+          }, SuperagentRightTabTitle)), 'right-title-fail')
+        })
+        let headerRemount = null
+        let headerCleanup = null
+        const mountHeaderEntry = () => {
+          if (headerCleanup) return
+          if (!hostLayout && !hostSidebarRight && !hostSidebarRightTabs) return
+          try {
+            const cleanup = mountBrandEntry(() => ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+              name: 'conversation.session.header.utilities', id: HEADER_UTILITY_ID, order: -6,
+            }, SuperagentHeaderUtility)), 'header-utility-fail')
+            if (!cleanup) return
+            headerCleanup = cleanup
+            if (typeof cleanup.remount === 'function') headerRemount = cleanup.remount
+          } catch (error) {
+            note('header-utility-fail', String((error && error.message) || error))
+          }
+        }
+        ctx.effect(() => {
+          mountHeaderEntry()
+          return () => {
+            if (headerCleanup) {
+              try { headerCleanup() } catch {}
+              headerCleanup = null
+              headerRemount = null
+            }
+          }
+        })
+
+        // 真机上 sidebarRight 等宿主服务可能在本插件 apply 之后才就绪：此时
+        // ctx.get('sidebarRight') 是 undefined，头部会被误判成「服务不存在」永久禁用
+        // （2026-11-24 真机截图）。用 Cordis 的 ctx.inject 等它们就绪后重取，
+        // 再重挂一次入口 —— 服务已到位就用新状态渲染，不到位仍然是原来的降级。
+        if (typeof ctx.inject === 'function') {
+          try {
+            ctx.inject(['sidebarRight', 'sidebarRightTabs', 'sessions'], (scoped) => {
+              const host = scoped && typeof scoped.get === 'function' ? scoped : ctx
+              const nextRight = optionalHostService(host, 'sidebarRight')
+              const nextTabs = optionalHostService(host, 'sidebarRightTabs')
+              const nextSessions = optionalHostService(host, 'sessions')
+              const nextLayout = optionalHostService(host, 'layout')
+              const changed = nextRight !== hostSidebarRight || nextTabs !== hostSidebarRightTabs
+                || nextSessions !== hostSessions || nextLayout !== hostLayout
+              hostSidebarRight = nextRight
+              hostSidebarRightTabs = nextTabs
+              hostSessions = nextSessions
+              if (nextLayout) hostLayout = nextLayout
+              if (!changed) return
+              note('host-services-ready', '收到 sidebarRight/sessions 服务，重挂头部与右栏入口')
+              if (headerCleanup && headerRemount) {
+                try { headerRemount() } catch {}
+              } else {
+                // apply 时服务全缺，头部当时根本没注册 —— 这里补挂。
+                mountHeaderEntry()
               }
             })
           } catch (error) {
-            note('desk-fail', String((error && error.message) || error))
-            return undefined
+            note('host-services-inject-fail', String((error && error.message) || error))
+          }
+        }
+
+        // 同一浏览器的其它页面改了名字：storage 事件只当触发器，真值回 localStorage 读。
+        // 该监听独立于任何页面是否打开，确保左栏/右栏与设置草稿都收到改名通知。
+        ctx.effect(() => {
+          const onStorage = (event) => {
+            if (!event) return
+            // localStorage.clear() 的事件 key 是 null —— 那是「所有覆盖都没了」，按删除处理。
+            const cleared = event.key === null || event.key === undefined
+            if (!cleared && event.key !== TAB_NAME_STORAGE_KEY) return
+            const before = tabNameLabel()
+            tabNameOverride = (cleared || event.newValue === null || event.newValue === undefined)
+              ? null
+              : readTabNameOverride()
+            if (tabNameLabel() === before) return
+            try { notifyTabName(before) } catch {}
+          }
+          try {
+            if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+              window.addEventListener('storage', onStorage)
+            }
+          } catch {}
+          return () => {
+            try {
+              if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('storage', onStorage)
+              }
+            } catch {}
           }
         })
 

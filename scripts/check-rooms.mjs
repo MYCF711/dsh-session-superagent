@@ -12,6 +12,20 @@ const RULES = {
   'delivery.js': ['./watermark-state.js'],
   'scheduler.js': [],
   'projection.js': ['./watermark-decision.js'],
+  'ticket-state.js': [],
+  'thread-subscription.js': [],
+  'execution-assignment.js': ['./ticket-state.js'],
+  'executor-host.js': [],
+  'outbox.js': [],
+  'admission-eval.js': [],
+  'source-registry.js': ['./data-provider.js'],
+  'skill-pack.js': [],
+  'ticket-projection.js': [],
+  'draft.js': [],
+  'prompt-config.js': [],
+  'i18n.js': [],
+  'modular-runtime.js': ['./ticket-state.js', './thread-subscription.js', './execution-assignment.js', './executor-host.js', './admission-eval.js', './ticket-projection.js', './draft.js', './prompt-config.js', './i18n.js'],
+  'modular-outbox-host.js': ['./outbox.js'],
 }
 
 export function inspectRoomImports(file, text) {

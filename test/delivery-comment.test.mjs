@@ -30,7 +30,7 @@ async function withFakeGitee(run) {
     calls.push({ url: String(url), method, body: init.body ? JSON.parse(init.body) : null })
     const payload = method === 'GET' && String(url).includes('/labels')
       ? [{ name: '主理鱼-已处理' }]
-      : { ok: true }
+      : method === 'GET' && String(url).includes('/comments') ? [] : { ok: true }
     return { ok: true, status: 200, text: async () => JSON.stringify(payload) }
   }
   try { return await run(calls) } finally { globalThis.fetch = original }
@@ -42,7 +42,7 @@ test('comment:true 把 note 回写到 Gitee issue，并保存本地 ack 记录',
     const out = JSON.parse(await ack.execute({ repo: 'acme/delivery', number: 7, note: '已修，见 #57', comment: true, format: 'json' }))
     const comment = calls.find((call) => call.method === 'POST' && call.url.includes('/issues/7/comments'))
     assert.ok(comment, '必须真的 POST 评论：' + calls.map((call) => call.method + ' ' + call.url).join('\n'))
-    assert.deepEqual(comment.body, { body: '已修，见 #57' })
+    assert.ok(comment.body.body.startsWith('已修，见 #57\n\n<!-- dsh-outbox:'), '正文必须保留 note，并带崩溃恢复查重 marker')
     return out
   })
   assert.equal(result.ok, true)
@@ -60,6 +60,17 @@ test('kind:pull 回写到 Gitee pulls 端点；默认 comment=false 不发评论
   await withFakeGitee(async (calls) => {
     await ack.execute({ repo: 'acme/delivery', number: 9, note: '只本地记录' })
     assert.ok(!calls.some((call) => call.url.includes('/comments')), '默认不允许发评论')
+  })
+})
+
+test('ack ID 包含操作语义：后续 comment:true 与新 note 不被首次 ack 吞掉', async () => {
+  await withFakeGitee(async (calls) => {
+    await ack.execute({ repo: 'acme/delivery', number: 7, note: 'first', comment: false, format: 'json' })
+    const second = JSON.parse(await ack.execute({ repo: 'acme/delivery', number: 7, note: 'second', comment: true, format: 'json' }))
+    assert.equal(second.ok, true)
+    const comments = calls.filter((call) => call.method === 'POST' && call.url.includes('/issues/7/comments'))
+    assert.equal(comments.length, 1)
+    assert.ok(comments[0].body.body.startsWith('second\n\n<!-- dsh-outbox:'))
   })
 })
 

@@ -3222,6 +3222,34 @@ test('issue #54：远端 await 期间并发删除守，明确返回本地水位�
   })
 })
 
+test('issue #54：删除并重建同 ID 守后，旧 ack 不得写入新世代', async () => {
+  await withPrState(async () => {
+    const mod = await prModule('issue-54-ack-recreated')
+    const tools = []
+    mod.apply({
+      tools: { register: (tool) => tools.push(tool) },
+      webServer: { register: () => () => {} },
+      agents: { currentInitiator: () => ({ id: 'session-a' }), get: () => null },
+      get: () => null, effect: (fn) => fn(), inject: () => {},
+    })
+    const original = issueAckEntry({
+      createdAt: '2026-01-01T00:00:00.000Z',
+      seen: { 54: '2026-01-01T00:00:00.000Z' },
+      cursor: '2026-01-01T00:00:00.000Z',
+    })
+    mod.__test.writeState({ watchers: { [original.id]: original } })
+    const pending = tools.find((tool) => tool.name === 'watch_ack').execute({ repo: 'o/r', number: 54, format: 'json' })
+    JSON.parse(await tools.find((tool) => tool.name === 'watch_stop').execute({ repo: 'o/r', delete: true, format: 'json' }))
+    await tools.find((tool) => tool.name === 'watch_start').execute({ repo: 'o/r' })
+    const out = JSON.parse(await pending)
+    assert.equal(out.ok, false)
+    assert.match(String(out.error), /删除或替换/)
+    const current = mod.__test.readState().watchers[original.id]
+    assert.equal(current.lastAcked, undefined)
+    assert.equal(current.obs['issue:54'], undefined)
+  })
+})
+
 test('pollPrOnce：首次同步走 REST 全量拉评论，之后走列表自带的 comments（A3）', async () => {
   await withPrState(async () => {
     const mod = await prModule('pr-a3-rest')

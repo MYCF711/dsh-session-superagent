@@ -64,10 +64,22 @@ vm.runInContext(readFileSync(join(ROOT, 'client.js'), 'utf8'), sandbox)
 const mod = registrations[0]
 if (!mod) throw new Error('client.js 没有注册任何模块')
 const slots = new Map()
+const tabDefinitions = []
+const navigationCalls = { selectPanel: [], openTab: [] }
+const hostServices = {
+  layout: { selectPanel: (id) => { navigationCalls.selectPanel.push(id) } },
+  sidebarRight: { openTab: (...args) => { navigationCalls.openTab.push(args) } },
+  sidebarRightTabs: { register: (definition) => { tabDefinitions.push(definition); return () => {} } },
+  sessions: {
+    list: { getSnapshot: () => ({ phase: 'ready', byId: { s1: { title: '当前项目会话' }, s2: { title: '另一项目会话' } } }) },
+    refresh: async () => {},
+  },
+}
 const ctx = {
+  get: (name) => hostServices[name],
   slots: {
     inject: (_name, fn) => fn(),
-    register: (opts, Component) => { slots.set(opts.id, Component); return () => {} },
+    register: (opts, Component) => { slots.set(opts.name + '#' + (opts.id || opts.key), Component); return () => {} },
   },
   effect: (fn) => fn(),
 }
@@ -76,9 +88,19 @@ mod.factory((name) => {
   throw new Error('unexpected require: ' + name)
 }).apply(ctx)
 
-const Desk = slots.get('session-superagent-desk')
-const Orbit = slots.get('session-superagent-orbit')
-if (!Desk) throw new Error('没有注册 session-superagent-desk，已注册：' + [...slots.keys()].join(','))
+const Desk = slots.get('main#session-superagent')
+const SessionDesk = slots.get('sidebar.right.pane.tab#dsh-session-superagent/session')
+const HeaderUtility = slots.get('conversation.session.header.utilities#session-superagent-current')
+const Orbit = slots.get('conversation.composer.dock#session-superagent-orbit')
+if (!Desk || !SessionDesk || !HeaderUtility || !Orbit) {
+  throw new Error('全局页/会话右栏/头部/Dock 入口注册不完整，已注册：' + [...slots.keys()].join(','))
+}
+if ([...slots.keys()].some((key) => key.startsWith('conversation.view#'))) {
+  throw new Error('旧 conversation.view 中栏注册必须保持删除')
+}
+if (tabDefinitions.length !== 1 || tabDefinitions[0].kind !== 'sessionSuperagent') {
+  throw new Error('sidebarRightTabs definition 未按 sessionSuperagent 注册')
+}
 
 // ── 样本快照：覆盖各种状态（正常/暂停/异常/仅观察/隔离/退避/过滤记录/历史）──
 const now = Date.now()
@@ -88,6 +110,19 @@ const snapshot = {
   body: {
     sessionTitle: 'README 收尾与发布',
     sessionGoal: null,
+    modular: {
+      actions: true, locale: 'zh',
+      records: {
+        total: 1, counts: { open: 0, assigned: 1, waiting: 0, ended: 0 },
+        records: [{ id: 'ticket:github:MYCF711/dsh-session-superagent#67', threadKey: 'github:MYCF711/dsh-session-superagent#67', status: 'assigned', ownerSessionId: 's1', workdir: 'E:/temp/iso', assignmentId: 'assign:ticket:67:1', resumeCount: 0, historyCount: 2 }],
+        subscriptions: { active: 1, inactive: 0 },
+        assignments: { total: 1, counts: { assigned: 1, waiting: 0, ended: 0 } },
+        outbox: { total: 1, records: [{ id: 'ack:67', ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', channel: { type: 'ack' }, body: '处理完成，准备回写。', status: 'failed', attempts: 1, nextAt: iso(-5000), createdAt: iso(60000), updatedAt: iso(5000), lastError: '网络超时：已按退避保留，恢复后可重试。' }], counts: { pending: 0, sending: 0, sent: 0, failed: 1, gone: 0 } },
+      },
+      execution: { total: 1, activeCount: 1, running: 1, queued: 0, maxWorkers: null, paused: false, current: { id: 'ticket:github:MYCF711/dsh-session-superagent#67', status: 'assigned' }, assignment: { id: 'assign:ticket:67:1', ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', sessionId: 'worker-ticket:67', workdir: 'E:/temp/iso', status: 'assigned', attempts: 1 } },
+      deployment: { status: 'ready', stateDir: 'E:/temp/state', problem: null, health: [{ name: 'executor', state: 'ready', detail: null }], counts: { total: 1, ready: 1, error: 0, starting: 0, paused: 0, unknown: 0 } },
+      draft: { base: { ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', body: '' }, value: { ticketId: 'ticket:github:MYCF711/dsh-session-superagent#67', body: '处理完成，准备回写。' }, revision: 0, phase: 'editing', dirty: true },
+    },
     // 诊断页要用：分诊信号（事实/判断 + 权重 + 是否默认开）
     triageSignals: [
       { key: 'reopened', label: '被重新打开', kind: 'fact', weight: 100, default: true, why: 'state_reason=reopened' },
@@ -185,6 +220,10 @@ function render(node) {
     if (props[key] !== undefined && props[key] !== false) parts.push(attr(key, props[key]))
   }
   if (keyIsVoid(tag)) return '<' + tag + parts.join('') + '>'
+  if (tag === 'textarea') {
+    const attrs = parts.filter((part) => !part.startsWith(' value=')).join('')
+    return '<textarea' + attrs + '>' + render(props.value === undefined ? (props.children || []) : props.value) + '</textarea>'
+  }
   return '<' + tag + parts.join('') + '>' + (props.children || []).map(render).join('') + '</' + tag + '>'
 }
 function keyIsVoid(tag) {
@@ -284,10 +323,21 @@ const pausedSnapshot = {
   }),
 }
 
-// hook 槽顺序必须与 client.js 里 ZhuliPanel 的 useState 顺序完全一致：
+const stalledSnapshot = {
+  loading: false, error: null,
+  body: baseBody({
+    sessionTitle: '无头联调会话',
+    credentials: { token: 'configured', sshKeyPath: 'none' },
+    watchers: [baseWatcher({
+      title: '无头联调会话', enabled: true, lastPoll: iso(2 * 3600000), poll: 'boot-miss',
+    })],
+  }),
+}
+
+// hook 槽顺序必须与 client.js 里 SuperagentPage 的 useState 顺序完全一致：
 // snap, tab, notice, form, token, goalDraft, goalTouched, [], editing, draft, search,
 // glossary, update, checking, settingsSection
-const blankForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: false, workdir: '' }
+const blankForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: false, workdir: '', createSessionId: 's1' }
 const editKey = 'MYCF711/dsh-session-superagent#s1'
 const editDraft = {
   intervalSec: '60', labels: 'ai-fix', ignoreLabels: '', assignee: '', activeHours: '09:00-12:00,14:00-23:00',
@@ -296,8 +346,8 @@ const editDraft = {
   sessionMaxWakes: '', isolateKeepDays: '', maxIsolated: '', priorityReopened: true,
   priorityComments: true, priorityLabels: true, priorityUnassigned: false, priorityStale: false,
 }
-const editingHooks = (dirty = false) => {
-  const hooks = deskHooks({})
+const editingHooks = (dirty = false, snap = snapshot) => {
+  const hooks = deskHooks({ snap })
   hooks[8] = editKey
   hooks[9] = { ...editDraft, goal: dirty ? '修改后的目标' : editDraft.goal }
   return hooks
@@ -309,11 +359,21 @@ const deskHooks = ({ snap = snapshot, tab = 'overview', notice = null, glossary 
 
 const ONLY_NAME = (process.argv.find((a) => a.startsWith('--only=')) || '').slice('--only='.length)
 
+const modularHooks = ({ detail = false, confirm = false, snap = snapshot } = {}) => {
+  const hooks = deskHooks({ tab: 'modular', snap })
+  hooks[24] = 'all'
+  hooks[25] = detail ? 'ticket:github:MYCF711/dsh-session-superagent#67' : null
+  if (confirm) hooks[26] = true
+  return hooks
+}
 const scenarios = [
   { name: '总览', hooks: deskHooks({}) },
   { name: '行内编辑', hooks: editingHooks(false) },
   { name: '行内编辑（已修改）', hooks: editingHooks(true) },
   { name: '判定', hooks: deskHooks({ tab: 'judge' }) },
+  { name: '模块化任务', hooks: modularHooks() },
+  { name: '模块化任务（Ticket 详情）', hooks: modularHooks({ detail: true }) },
+  { name: '模块化任务（停止确认）', hooks: modularHooks({ confirm: true }) },
   { name: '触发', hooks: deskHooks({ tab: 'trigger' }) },
   // 页签名称：这一帧展示「已保存」的样子（输入框里就是生效中的名字；保存按钮因无改动而禁用、
   // 恢复默认可点）。不注入 toast：成功提示走 useToast 的 toastView 槽，不能拿错误色的 notice 冒充。
@@ -333,6 +393,7 @@ const scenarios = [
   { name: '空态（无守）', hooks: deskHooks({ snap: emptySnapshot }) },
   { name: '错误态（守失败）', hooks: deskHooks({ snap: errorSnapshot }) },
   { name: '暂停态（已停用）', hooks: deskHooks({ snap: pausedSnapshot }) },
+  { name: '轮询停摆（headless）', hooks: deskHooks({ snap: stalledSnapshot }) },
   { name: '读取失败', hooks: [{ loading: false, error: 'Failed to fetch', body: null }, 'overview', null, blankForm, '', '', false, [], null, {}, '', false, null, false, 'source', null, null] },
 ]
 
@@ -344,11 +405,20 @@ const orbitWatchers = [
 ]
 
 const shown = ONLY_NAME ? scenarios.filter((s) => s.name.includes(ONLY_NAME)) : scenarios
-const sections = shown.map((scenario) => {
-  hookIndex = 0
-  const tree = Desk({ sessionId: 'preview-session' })
-  return '<h2 class="preview-title">' + scenario.name + '</h2>\n<div class="preview-frame">' + render(tree) + '</div>'
-}).join('\n')
+const sessionSnapshot = {
+  ...snapshot,
+  body: {
+    ...snapshot.body,
+    sessionTitle: '当前项目会话',
+    watchers: snapshot.body.watchers.filter((watcher) => watcher.sessionId === 's1'),
+  },
+}
+const sessionScenarios = [
+  { name: '会话右栏 · 模块化任务', hooks: modularHooks({ snap: sessionSnapshot }) },
+  { name: '会话右栏 · 行内编辑', hooks: editingHooks(false, sessionSnapshot) },
+  { name: '会话右栏 · 空态', hooks: deskHooks({ snap: emptySnapshot }) },
+]
+const sessionShown = ONLY_NAME ? sessionScenarios.filter((s) => s.name.includes(ONLY_NAME)) : sessionScenarios
 
 // 兜底 token：**必须用真名**（旧版这里写的是 --dsw-alias-border-default / success-500 / accent-primary，
 // 宿主机上根本没有这些名字，所以预览一直是"没上色"的假象）。浅色/深色两套，供离线看布局用。
@@ -394,9 +464,23 @@ const darkTokens = `
 const sectionsForTheme = shown.map((scenario) => {
   hookQueue = scenario.hooks
   hookIndex = 0
-  const tree = Desk({ sessionId: 'preview-session' })
+  const tree = Desk({})
   return '<h2 class="preview-title">' + scenario.name + '</h2>' + '<div class="preview-frame">' + render(tree) + '</div>'
 }).join('')
+
+const sessionSectionsForTheme = sessionShown.map((scenario) => {
+  hookQueue = scenario.hooks
+  hookIndex = 0
+  const tree = SessionDesk({ sessionId: 's1' })
+  return '<h2 class="preview-title">' + scenario.name + '</h2>' + '<div class="preview-frame">' + render(tree) + '</div>'
+}).join('')
+
+const headerSection = (() => {
+  hookQueue = [null, false]
+  hookIndex = 0
+  const tree = HeaderUtility({ sessionId: 's1' })
+  return '<h2 class="preview-title">会话头部入口</h2><div class="preview-frame">' + render(tree) + '</div>'
+})()
 
 const orbitSection = (() => {
   hookQueue = [orbitWatchers, true, { x: 200, y: 400 }]
@@ -418,7 +502,10 @@ const themePopover = (label, tokens) => '<section>'
 const themeBlock = (label, tokens) => '<section>'
   + '<h1 class="theme-name">' + label + '</h1>'
   + '<div class="themed" style="' + tokens.split(String.fromCharCode(10)).join(' ') + '">'
-  + (ONLY_NAME ? '' : orbitSection) + sectionsForTheme
+  + (ONLY_NAME ? '' : orbitSection)
+  + headerSection
+  + '<h2 class="preview-title">左侧全局中枢</h2>' + sectionsForTheme
+  + sessionSectionsForTheme
   + '</div></section>'
 
 
@@ -446,8 +533,8 @@ const html = '<!doctype html><meta charset="utf-8"><title>主理鱼面板预览�
   + (process.argv.includes('--outline') ? '.dt-page > * { outline: 1px dashed #f0f !important; }' : '')
   + '</style>'
   + (process.argv.includes('--measure') ? '<script>window.addEventListener("load", function () { var body = document.querySelectorAll(".dt-ticket-body")[0]; var rows = []; rows.push("body h" + Math.round(body.getBoundingClientRect().height)); Array.prototype.forEach.call(body.children, function (el) { var r = el.getBoundingClientRect(); rows.push((el.className.split(" ")[0] || el.tagName) + " h" + Math.round(r.height) + " " + (el.textContent || "").slice(0, 14)); }); var pre = document.createElement("pre"); pre.id = "measure"; pre.textContent = rows.join(" | "); document.body.insertBefore(pre, document.body.firstChild); });</script>' : '')
-  + '<div style="font:13px/1.5 system-ui;opacity:.75">主理鱼面板静态预览 —— 真实 client.js 渲染的 DOM + 移植的官方 CSS。'
-  + '兜底色值只是近似（真机以宿主注入的 --dsw-alias-* 为准），这里用来发现「某个主题下颜色写死或漏 token」。</div>'
+  + '<div style="font:13px/1.5 system-ui;opacity:.75">主理鱼最终导航静态预览（无旧 conversation.view 中栏）—— 真实 client.js 渲染的 DOM + 移植的官方 CSS。'
+  + '仅保留左侧全局中枢、会话右栏、头部入口与 Dock/Orbit；兜底色值只是近似（真机以宿主注入的 --dsw-alias-* 为准）。</div>'
   + (ONLY_POPOVER
     ? (process.argv.includes('--dark') ? themePopover('深色主题', darkTokens) : themePopover('浅色主题', lightTokens) + themePopover('深色主题', darkTokens))
     : (process.argv.includes('--dark') ? themeBlock('深色主题', darkTokens) : themeBlock('浅色主题', lightTokens) + themeBlock('深色主题', darkTokens)))

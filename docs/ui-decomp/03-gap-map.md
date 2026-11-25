@@ -4,6 +4,43 @@
 >
 > 本文件只做静态只读核对与后续实施清单；本次没有改 `client.js`、没有启动 GUI、没有 commit。
 
+## 实施回写（2.0.0 · 双盲 UI 对照问题修复）
+
+- **官方**：Forge `HeaderButton.tsx:47-66` 用 DSH Tooltip + Button、`aria-pressed` 和可见性事实；`mount.ts:376-385` 在未显示时 `openTab(kind)`，已显示时只对当前 Session 的同 kind tab 调用 `hide(tab.id)`。
+- **我们**：头部订阅 `sidebarRight.view`，从 `tabsIn(sessionId)` 取同 kind 可见 tab，Enter/Space 与鼠标共用 open/hide toggle；缺 `view.subscribe/tabsIn/hide` 时保持 open-only，不伪造 pressed。头部同时检查 `sidebarRight.openTab` 与 `sidebarRightTabs.register`，缺 definition 服务即禁用并说明原因。提示优先使用安装版 DSH Tooltip + 官方 forwardRef Button，缺少任一能力才回退本地 Btn + `title`。
+- **为什么对齐官方**：同一事实源驱动按钮状态与真实右栏可见性，避免把 open 调用次数误当展开状态；能力缺失仅去掉 toggle，不牺牲原有 open 入口，也没有新增自制浮层。
+- **M1 computed 结论**：700px 深色异常帧的文本矩形为 28×19、`visibility:visible`、`opacity:1`、命中自身，排除裁剪和遮罩。选中规则始终是官方 `color:var(--dsw-alias-label-primary)`；异常采样时 color/text-fill 为 rgb(15,17,21)，等待真实 `animation.finished` 后为 rgb(249,250,251)，文字恢复。根因是主题切换的 `color 0.18s` 过渡中截图，稳态产品 CSS/token 无缺陷；只修验收脚本等待真实动画完成，未新增颜色、尺寸魔数或提高对比度基线。
+- **回归**：`modular-ui` 增加 pressed/toggle、open-only、M3 与 Tooltip fallback 用例；真实 Chromium 补头部 hover Tooltip、pin/Escape、Enter/Space/二次 hide、两容器 tabs 方向键/Home/End、700px 两容器双主题当前页签 token/文本矩形与无横向溢出矩阵。
+- **验证**：定向 `client + modular-ui + update-ui + ui-l84-tooltip` **287/287**，UI audit **11/11**；真实 Chromium `156.0.8078.96` **18/18**，最终证据 `tmp-artifacts/task-28-final5/summary.json`，8 张截图同目录（含 `global/session-700-light/dark.png`）。宿主与 API 仍为 fixture；真实 DSH WebView、读屏、触摸、IME 和用户整版确认保持未验，不推送。
+
+## 实施回写（2.0.0 · 旧中栏退出）
+
+- **官方**：全局管理页使用 `main[key]` + `sidebar.panellist[id]`，当前 Session 工作台使用 header utility、右栏 definition 与 keyed body/title；`conversation.view` 只属于对话中栏视图环。
+- **我们**：删除主理鱼 `conversation.view` 注册、Legacy 页面与重定向组件，不再保留旧中栏兼容主页。保留左侧 `session-superagent`、右栏 `dsh-session-superagent/session` 的 definition/body/title、头部 `session-superagent-current` 和 Dock/Orbit；兼容 API、watcher 数据与服务端 scope 均未改。
+- **品牌改名**：设置里的本地覆盖与 `/state.brandName` 继续共用同一事实源。`subscribeTabName` 改在左栏、右栏 definition 和右栏标题上先 dispose 再按原 id/key/component 重注册；跨页面 `storage` 监听独立保留，不随旧中栏删除。
+- **测试与预览**：`client + modular-ui` **225/225**，UI audit **11/11**；预览生成器显式拒绝任何 `conversation.view` 注册，最终双主题产物为 `tmp-artifacts/task-25/preview.html`，截图为同目录 `light.png` / `dark.png`。
+- **未验**：本任务只复跑组件桩、静态预览与既有浏览器可模拟结构，不把真实 DSH WebView 的读屏、触摸、IME 或用户整版确认写成通过；不推送。
+
+## 实施回写（1.1.0 · 共享全局页与会话右栏）
+
+- **官方**：DSH `0.2.2-rc.2`（`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`）的 `main[key]` + `sidebar.panellist[id]`、`conversation.session.header.utilities`、`sidebarRightTabs` definition + `sidebar.right.pane.tab(.title)` 与标准 `guide`；证据见 `docs/ui-decomp/04-会话级导航.md`。
+- **我们**：原面板收为一个 `SuperagentPage`。左侧注册 `session-superagent` 全局中枢；会话头部注册 `session-superagent-current`；右栏注册 `dsh-session-superagent/session`，打开 kind 为 `sessionSuperagent`。右栏 body/title 共用 definition id，Guide 只声明一张标准入口卡；旧 `conversation.view` 在 `layout.selectPanel` 可用时重定向全局页。
+- **共享功能**：watcher 新建/编辑/暂停/恢复/删除、Ticket、执行、Outbox、草稿、确认框、Session 导航和原键盘/焦点路径仍走同一组件与动作。全局读取显式使用 `/state?scope=global`；全局新建复用宿主 `sessions.list.getSnapshot()/refresh()` catalog 选择目标会话，目标 `sessionId` 只进入新建请求，不改变全局读取或批量动作；目录缺失/错误/为空均显式禁用并说明。右栏只消费 slot 的 `sessionId`，Ticket/Outbox/草稿及 watcher 动作显式携带该 scope；无 `sessionId` 不读取全局状态。
+- **服务降级**：`sidebarRight` 不存在时头部按钮禁用并显示真实原因，Dock/Orbit 保留旧操作列表并标明降级；`sidebarRightTabs` 不存在不伪造 definition。Dock/Orbit 有真实服务时只调用 `openTab('sessionSuperagent')`，不拼 `sidebar://`，也不猜 sessionId。
+- **素材与 derived**：入口继续复用既有 `OrbitMark` 主理鱼轨道图标、官方 Button 与 `dt-*`/token；头部 utility 是带 `aria-label/title` 的纯图标按钮，不占文字宽度；没有新画图标、浮层或独立开始页卡片。`SuperagentPage` 的 scope 适配与缺服务文案属于本插件 derived，原因是官方 Schedule/Forge 不持有主理鱼 watcher/Ticket 领域模型。
+- **hook/预览**：`SuperagentPage` 原有位置化 `useState` 队列没有新增或重排；全局目标选择复用现有 `form` 状态，新状态只在新头部入口、旧入口重定向组件自己的队列。`panel-harness` 增加真实可选服务注入，`render-preview` 同步 `deskHooks`、definition 与全局/会话页面， keyed slot 按 `name#id/key` 索引避免 body/title 互相覆盖。
+- **验证**：`modular-ui` 16/16、`client.test` 209/209；真实 Chromium 读取双主题静态预览，浅色/深色均包含全局与当前会话右栏、Ticket/Outbox/草稿，两个可见 frame 均无横向溢出。产物：`tmp-artifacts/task-18/preview.html`、`light.png`、`dark.png`。
+- **未验**：真实 DSH WebView 的 slot 注入、右栏显示/隐藏同步、读屏/触摸/IME 与用户整版交互确认；本任务静态预览和组件桩不冒充这些验收，也未在本任务内完成两组双盲 Debug。用户确认前不推送。
+
+## 实施回写（1.1.0 · 模块化会话级选择性复刻）
+
+- **官方**：`dsh-superagent-prototype@8c32a9dc5d72c033816c6a8110b37f40cf94fba4` 的 `ticket.tsx / execution.tsx / draft.tsx / widgets.tsx / client.css`。
+- **我们**：只移植会话级 TicketLine、详情、执行状态、Outbox、草稿和健康。`ModularView` 的 records 投影、`executorPaused`（仅 worker）与 `executionMode` 是主理鱼 derived，原因是旧 watcher/inline 必须保持原语义；不搬飞书、多人授权、Mandate 或团队角色。
+- **结构**：`.dt-column > Section`；Ticket 使用 `.dt-list > .dt-row.dt-ticket > .dt-ticket-stage + .dt-ticket-body`，详情使用 `.dt-page-head + KeyValues + .dt-danger-zone`，停止统一 ConfirmButton；草稿使用 `form/Fields/SaveBar`。
+- **derived 例外**：`ctx.get('sessions') + ctx.get('uiWorkspace')` 提供可选 Session 导航，缺服务时显式报错，不伪造路由；`sessionStorage` 只保存回复草稿，`executorPaused` 只暂停新的 worker 自动执行，inline 不变。
+- **验收**：模块化 UI 8/8、全量 1389/1389、UI audit 11/11；真实 Chromium 覆盖筛选、详情、Session 导航、停止确认、worker 暂停、草稿保存/恢复和 Outbox 错误。双主题桌面/700px 预览无横向溢出。
+- **未验**：真实 DSH WebView 的宿主 slot、读屏、触摸和长期 worker 运行；**用户看图确认前不推送**。
+
 ## 实施回写（0.9.264）
 
 本批已落地：官方 16×16 SVG path（含独立图元与 viewBox）、补 `chevron-up`、Trace/运行事件一事件一 `li.dt-event`、运行事件使用 `ol.dt-timeline`、删除不再叠加原生确认框、设置按钮直达对应分区、更新失败不再误报最新、诊断复制失败不再假报成功。

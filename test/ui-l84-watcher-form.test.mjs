@@ -54,7 +54,7 @@ function scenario(kind, fetch) {
     },
   }
   const client = loadClient({ fetch: fetch || (async (url) => response(String(url).includes('/state') ? snap.body : { ok: true })) })
-  const desk = client.registrations.find((entry) => entry.opts.id === 'session-superagent-desk')
+  const desk = client.registrations.find((entry) => entry.opts.name === 'sidebar.right.pane.tab' && entry.opts.key === 'dsh-session-superagent/session')
   const queue = deskQueue(snap, kind === 'edit' ? EDIT_ID : null, kind === 'edit' ? makeDraft() : {}, kind === 'add' ? 'trigger' : 'overview')
   if (kind === 'add') queue[3] = makeForm()
   return {

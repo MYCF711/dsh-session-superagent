@@ -21,14 +21,18 @@ import { tempDir } from './fixtures/tmpdir.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-test('client.js 注册主理鱼与 composer dock 上的轨道环', () => {
+test('client.js 注册全局/会话入口与 composer dock，不再注册旧中栏', () => {
   const { id, registrations } = loadClient()
   assert.equal(id, 'dsh-session-superagent')
-  const names = registrations.map((r) => r.opts.name + '#' + r.opts.id)
-  assert.ok(names.includes('conversation.view#session-superagent-desk'), names.join(','))
+  const names = registrations.map((r) => r.opts.name + '#' + (r.opts.id || r.opts.key))
+  assert.ok(names.includes('main#session-superagent'), names.join(','))
+  assert.ok(names.includes('sidebar.panellist#session-superagent'), names.join(','))
+  assert.ok(names.includes('sidebar.right.pane.tab#dsh-session-superagent/session'), names.join(','))
+  assert.ok(names.includes('sidebar.right.pane.tab.title#dsh-session-superagent/session'), names.join(','))
+  assert.ok(names.includes('conversation.session.header.utilities#session-superagent-current'), names.join(','))
   assert.ok(names.includes('conversation.composer.dock#session-superagent-orbit'), names.join(','))
-  // 0.3.2 起不再挂会话头部
-  assert.ok(!names.some((n) => n.includes('header.actions')), '头部徽章应已移除')
+  assert.equal(registrations.some((r) => r.opts.name === 'conversation.view'), false, '旧中栏注册必须删除')
+  assert.ok(!names.some((n) => n.includes('header.actions')), '旧头部徽章保持移除')
   const orbit = registrations.find((r) => r.opts.id === 'session-superagent-orbit')
   assert.ok(orbit.opts.order < 0, 'order 要是负数，才能排在 activity(0)/usage(1) 左边')
 })
@@ -140,7 +144,7 @@ test('状态栏面板每行都带暂停/删除，能直接关掉一个主理鱼'
 
 test('主理鱼面板：总览有统计与每行操作（移植官方 GUI 后）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -167,7 +171,7 @@ test('主理鱼面板：总览有统计与每行操作（移植官方 GUI 后）
 
 test('主理鱼面板：退避中与隔离状态以标签形式出现', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -222,7 +226,7 @@ test('面板显示隔离执行状态与活跃时段', () => {
 
 test('值守台有全部暂停/全部恢复按钮', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -256,7 +260,7 @@ test('面板显示最近一次唤醒的结果', () => {
 
 test('主理鱼面板：失败会在「需要关注」里变成一条可读问题', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -275,7 +279,7 @@ test('主理鱼面板：失败会在「需要关注」里变成一条可读问�
 
 test('主理鱼面板：每行有「编辑」按钮（点开后可改间隔/过滤/时段/隔离）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -304,7 +308,7 @@ test('主理鱼面板：每行有「编辑」按钮（点开后可改间隔/过�
 
 test('主理鱼面板：仅观察标签 + 最近被过滤清单', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -329,7 +333,7 @@ test('主理鱼面板：仅观察标签 + 最近被过滤清单', () => {
 
 test('主理鱼面板：搜索能过滤，术语表能打开，设置页有来源卡片', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -358,7 +362,7 @@ test('主理鱼面板：搜索能过滤，术语表能打开，设置页有来�
 
 test('主理鱼面板：「判定」页把每轮结果和原因列出来', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = new Date(Date.now() - 60000).toISOString()
   const snapshot = {
     loading: false, error: null,
@@ -385,7 +389,7 @@ test('主理鱼面板：「判定」页把每轮结果和原因列出来', () =>
 
 test('删除按钮必须保留 dt-btn 基类（第二轮审核发现 className 被 ...rest 覆盖过）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -406,7 +410,7 @@ test('删除按钮必须保留 dt-btn 基类（第二轮审核发现 className �
 
 test('面板恢复显示会话标题与每行 goal', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'sidebar.right.pane.tab' && r.opts.key === 'dsh-session-superagent/session')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -416,7 +420,7 @@ test('面板恢复显示会话标题与每行 goal', () => {
       watchers: [watcher('a/b', { id: 'a/b#s1', note: '把 widget 的 issue 都处理完' })],
     },
   }
-  const nodes = walk(render(desk, deskQueue(snapshot)))
+  const nodes = walk(render(desk, deskQueue(snapshot), { sessionId: 's1' }))
   const text = nodes.filter((n) => n.type === '#text').map((n) => n.text).join(' ')
   assert.ok(text.includes('会话：主理鱼重构'), '头部要显示会话标题：' + text.slice(0, 180))
   assert.ok(text.includes('目标: 把 widget 的 issue'), '每行要显示目标/规则：' + text.slice(0, 240))
@@ -424,7 +428,7 @@ test('面板恢复显示会话标题与每行 goal', () => {
 
 test('删除按钮 armed 态仍然保留 dt-btn 基类（并变成危险色）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -446,7 +450,7 @@ test('删除按钮 armed 态仍然保留 dt-btn 基类（并变成危险色）',
 
 test('有新版本时面板顶部给一条横幅，点进去看升级命令', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: '会话', credentials: { token: 'configured', sshKeyPath: 'none' }, watchers: [] },
@@ -465,7 +469,7 @@ test('有新版本时面板顶部给一条横幅，点进去看升级命令', ()
 
 test('活跃时段之外的 watcher 不再谎报「主理中」（改显示「时段外」）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   // 造一个一定落在窗口外的时段：把「当前时间」往后推一小时当起点，跨度一小时
   const now = new Date()
   const pad = (n) => String(n).padStart(2, '0')
@@ -488,7 +492,7 @@ test('活跃时段之外的 watcher 不再谎报「主理中」（改显示「�
 
 test('设置页用官方左栏导航（dt-settings + dt-settings-nav）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: '会话', credentials: { token: 'none', sshKeyPath: 'none' }, watchers: [] },
@@ -504,7 +508,7 @@ test('设置页用官方左栏导航（dt-settings + dt-settings-nav）', () => 
 
 test('空态不是白屏：三步引导 + 一个能直接开始的动作', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: '会话', credentials: { token: 'none', sshKeyPath: 'none' }, watchers: [] },
@@ -524,7 +528,7 @@ test('空态不是白屏：三步引导 + 一个能直接开始的动作', () =>
 
 test('判定页：点跳过原因标签可只看这一类（知识库里的"还没做"补上）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -551,7 +555,7 @@ test('判定页：点跳过原因标签可只看这一类（知识库里的"还�
 
 test('能力徽章可点：点「只读」只剩只读的守', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -578,7 +582,7 @@ test('能力徽章可点：点「只读」只剩只读的守', () => {
 
 test('中间态：有守但从未唤醒过，要给"在等"的引导而不是沉默', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -604,7 +608,7 @@ test('中间态：有守但从未唤醒过，要给"在等"的引导而不是沉
 
 test('需要重启时面板顶部要有横幅（"功能看起来没生效"最常见的根因）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const base = {
     sessionGoal: null, sessionTitle: '会话',
     credentials: { token: 'none', sshKeyPath: 'none' }, watchers: [],
@@ -621,7 +625,7 @@ test('需要重启时面板顶部要有横幅（"功能看起来没生效"最常
 
 test('面板自己的错误也要说人话（Failed to fetch 客户看不懂）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = { loading: false, error: 'Failed to fetch', body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [] } }
   // 四个页签都扫：一个页签干净不代表别的页签干净
   const texts = ['overview', 'queue', 'trigger', 'settings'].map((tab) =>
@@ -634,7 +638,7 @@ test('面板自己的错误也要说人话（Failed to fetch 客户看不懂）'
 
 test('判定页要能看见时间线（"为什么没叫醒我"要有据可查）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [
@@ -656,7 +660,7 @@ test('判定页要能看见时间线（"为什么没叫醒我"要有据可查）
 
 test('"叫醒了没回音"要给出下一步动作：建议规则可以复制（不代写仓库文件）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [
@@ -677,7 +681,7 @@ test('"叫醒了没回音"要给出下一步动作：建议规则可以复制（
 
 test('「按仓库」汇总里的仓库名可以点（点一下只看这个仓库）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [
@@ -697,7 +701,7 @@ test('「按仓库」汇总里的仓库名可以点（点一下只看这个仓�
 
 test('「只看有问题的」：一键筛掉健康的守，并且能一键回到全部', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [
@@ -721,7 +725,7 @@ test('「只看有问题的」：一键筛掉健康的守，并且能一键回�
 
 test('只读仓库要在「需要关注」里出现（不能只靠行内一个小徽章）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [
@@ -737,7 +741,7 @@ test('只读仓库要在「需要关注」里出现（不能只靠行内一个�
 
 test('gh 不可用要说清后果与下一步（不能只显示原始错误）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -757,7 +761,7 @@ test('gh 不可用要说清后果与下一步（不能只显示原始错误）',
 
 test('token 告警与来源指引都进入「凭证」，不再误指「来源」', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -781,7 +785,7 @@ test('token 告警与来源指引都进入「凭证」，不再误指「来源�
 
 test('归档 / 禁用仓库也要在「需要关注」里说清（客户端之前漏了这两条）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [
@@ -797,7 +801,7 @@ test('归档 / 禁用仓库也要在「需要关注」里说清（客户端之�
 
 test('面板显示本会话用量，到上限时给出可执行的建议', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const base = { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [watcher('a/b', { id: 'a/b#s1' })] }
 
   const half = walk(render(desk, deskQueue({ loading: false, error: null, body: { ...base, sessionUsage: { used: 3, cap: 12, capped: 0 } } })))
@@ -816,7 +820,7 @@ test('面板显示本会话用量，到上限时给出可执行的建议', () =>
 
 test('暂停原因可以按原因码筛选（点 Pill 只看那一类）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [
@@ -839,7 +843,7 @@ test('暂停原因可以按原因码筛选（点 Pill 只看那一类）', () =>
 
 test('判定页：搜索框输入编号后可追溯（点它问服务端要结论）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [watcher('a/b', { id: 'a/b#s1' })] },
@@ -855,7 +859,7 @@ test('判定页：搜索框输入编号后可追溯（点它问服务端要结�
 
 test('面板显示近几天的累计（来自每条守的 daily）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, sessionUsage: { used: 2, cap: 12, capped: 0 },
@@ -867,7 +871,7 @@ test('面板显示近几天的累计（来自每条守的 daily）', () => {
 
 test('"今天明显比平时忙"只有 busy=true 时才提示（阈值判断在服务端）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const mk = (busy) => ({
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, sessionUsage: { used: 2, cap: 12, capped: 0 },
@@ -882,17 +886,21 @@ test('"今天明显比平时忙"只有 busy=true 时才提示（阈值判断在�
 
 test('面板与唤醒消息说的是同一套规则（AGENTS.md → 修/回/待定 → ack）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [watcher('a/b', { id: 'a/b#s1' })] },
   }
   const text = walk(render(desk, deskQueue(snap))).filter((n) => typeof n.text === 'string').map((n) => n.text).join(' ')
-  // 三件事必须都能在面板里找到，否则客户只看到"会叫醒我"，不知道叫醒之后发生什么
-  assert.ok(text.includes('AGENTS.md'), '面板要提到按仓库规则判断')
-  assert.ok(text.includes('修 / 回 / 待定'), '面板要给出三种处理方式')
-  assert.ok(text.includes('watch_ack'), '面板要说明最后要 ack')
-  assert.ok(text.includes('不会扩大范围'), '面板要说清只处理列出的那几条')
+  // 规则不再常驻主面板（四行灰字会把右栏挤成一团），但必须能在面板里查到：
+  // 挂在「判定」页问号提示上，客户问「叫醒之后会发生什么」时有据可依。
+  assert.ok(!text.includes('AGENTS.md'), '主面板不再常驻这段规则，避免挤成一团')
+  const tips = walk(render(desk, deskQueue(snap, null, {}, 'judge')))
+    .filter((n) => typeof n.text === 'string').map((n) => n.text).join(' ')
+  assert.ok(tips.includes('AGENTS.md'), '判定页提示要提到按仓库规则判断')
+  assert.ok(tips.includes('修 / 回 / 待定'), '判定页提示要给出三种处理方式')
+  assert.ok(tips.includes('watch_ack'), '判定页提示要说明最后要 ack')
+  assert.ok(tips.includes('不会扩大范围'), '判定页提示要说清只处理列出的那几条')
   // 隔离执行的说明在「触发」页，单独渲染一次
   const triggerText = walk(render(desk, deskQueue(snap, null, {}, 'trigger'))).filter((n) => typeof n.text === 'string').map((n) => n.text).join(' ')
   assert.ok(triggerText.includes('自动回收'), '隔离执行要说明用完会回收：' + triggerText.slice(0, 200))
@@ -900,7 +908,7 @@ test('面板与唤醒消息说的是同一套规则（AGENTS.md → 修/回/待�
 
 test('只读提示必须说出仓库名（不能是"你对 这个仓库 只有读权限"）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, sessionUsage: { used: 0, cap: 12, capped: 0 },
@@ -913,7 +921,7 @@ test('只读提示必须说出仓库名（不能是"你对 这个仓库 只有�
 
 test('术语表覆盖客户会在面板上遇到的词（含"上限"这种歧义词）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [watcher('a/b', { id: 'a/b#s1' })] },
@@ -928,7 +936,7 @@ test('术语表覆盖客户会在面板上遇到的词（含"上限"这种歧义
 
 test('长错误不能把建议切掉（截断曾恰好切掉最有用的一段）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const longMain = '轮询失败：' + 'x'.repeat(200)
   const hint = '（网络抖动：这一轮没连上 GitHub，已按退避自动重试，不需要手动处理）'
   const snap = {
@@ -943,7 +951,7 @@ test('长错误不能把建议切掉（截断曾恰好切掉最有用的一段�
 
 test('首次使用（空态）不能露出内部字段名，并且要给出三步引导', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const empty = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: null, credentials: {}, sessionUsage: null, watchers: [] },
@@ -958,13 +966,13 @@ test('首次使用（空态）不能露出内部字段名，并且要给出三�
 
 test('空态三步里提到的控件，必须在「触发」页真实存在（改名会让引导失效）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'sidebar.right.pane.tab' && r.opts.key === 'dsh-session-superagent/session')
   const empty = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, sessionUsage: null, watchers: [] },
   }
   const text = (tree) => walk(tree).filter((n) => typeof n.text === 'string').map((n) => n.text).join(' | ')
-  const overview = text(render(desk, deskQueue(empty)))
+  const overview = text(render(desk, deskQueue(empty), { sessionId: 's1' }))
   const trigger = text(render(desk, deskQueue(empty, null, {}, 'trigger'), { sessionId: 's1' }))
 
   // 从引导里抽出所有「…」引号内的控件名/标签名
@@ -982,7 +990,7 @@ test('空态三步里提到的控件，必须在「触发」页真实存在（�
 
 test('「需要关注」按严重程度排序：会丢消息的排最前，静态提示排后', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -1009,7 +1017,7 @@ test('「需要关注」按严重程度排序：会丢消息的排最前，静�
 
 test('判定页的日志标题要说清"最近 5 次唤醒"（数据早就有，只是名字看不出来）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   const snap = {
     loading: false, error: null,
@@ -1028,7 +1036,7 @@ test('判定页的日志标题要说清"最近 5 次唤醒"（数据早就有，
 
 test('同一仓库被多个会话守着时，面板要说清"还有谁在守"', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, sessionUsage: { used: 1, cap: 12, capped: 0 },
@@ -1046,7 +1054,7 @@ test('同一仓库被多个会话守着时，面板要说清"还有谁在守"', 
 
 test('错误旁边要有「下一步」按钮（登录失效 → 去填 token；改名 → 改仓库地址）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   const base = (kind, err) => ({
     loading: false, error: null,
@@ -1080,7 +1088,7 @@ function outsideWindow() {
 
 test('顶部四个计数必须加得上总数（互斥，不重复数）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   // 四种状态各一条 + 一条"已暂停且出错"（以前会被数两次）
   const list = [
@@ -1107,7 +1115,7 @@ test('顶部四个计数必须加得上总数（互斥，不重复数）', () =>
 
 test('历史数据里残留的 304 不该被算成「异常」', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   const snap = {
     loading: false, error: null,
@@ -1121,7 +1129,7 @@ test('历史数据里残留的 304 不该被算成「异常」', () => {
 
 test('错误要标出「多久之前」，超过一小时标「旧记录」', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   const snap = (mins) => ({
     loading: false, error: null,
@@ -1143,7 +1151,7 @@ test('错误要标出「多久之前」，超过一小时标「旧记录」', ()
 
 test('凭证失效时面板要显眼提示「不会自己恢复」', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   const snap = {
     loading: false, error: null,
@@ -1162,7 +1170,7 @@ test('凭证失效时面板要显眼提示「不会自己恢复」', () => {
 
 test('连续失败时面板要显示「第几次失败 + 下次重试」', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   const soon = (mins) => new Date(Date.now() + mins * 60000).toISOString()
   const snap = {
@@ -1181,7 +1189,7 @@ test('连续失败时面板要显示「第几次失败 + 下次重试」', () =>
 
 test('「已放慢到 X 小时档」从后端 retryPolicy 算，不是写死的', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = (mins) => new Date(Date.now() - mins * 60000).toISOString()
   const soon = (mins) => new Date(Date.now() + mins * 60000).toISOString()
   const snap = (policy) => ({
@@ -1200,7 +1208,7 @@ test('「已放慢到 X 小时档」从后端 retryPolicy 算，不是写死的'
 
 test('默认值提示从 /state 的 defaults 读，不是写死的 12/3/6', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const base = (defaults) => ({
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, sessionUsage: { used: 0, cap: 12, capped: 0 },
@@ -1244,7 +1252,7 @@ test('比例条不为 0 的类别画线段（避免 1px 脏点），并保持总
 
 test('活跃时段用两个原生时间选择器（起 / 止），不再让人手打 09:00-23:00', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -1268,7 +1276,7 @@ test('活跃时段用两个原生时间选择器（起 / 止），不再让人�
 
 test('issue #58：HoursField 多段渲染 4 个 time input，编辑/添加/删除都规范拼接', () => {
   const { registrations, render, stateCalls, resetStateCalls } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [] },
@@ -1303,7 +1311,7 @@ test('issue #58：HoursField 多段渲染 4 个 time input，编辑/添加/删�
 
 test('HoursField 单段起止/全天/跨夜原行为不变', () => {
   const { registrations, render, stateCalls, resetStateCalls } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = { loading: false, error: null, body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [] } }
   const queue = deskQueue(snap, null, {}, 'trigger')
   queue[3] = { ...deskForm, activeHours: '22:00-06:00' }
@@ -1328,7 +1336,7 @@ test('HoursField 单段起止/全天/跨夜原行为不变', () => {
 
 test('inWindowNow 多段 some：全在窗外才是时段外，任一非法段整串返回 null', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const pad = (n) => String(n).padStart(2, '0')
   const hour = new Date().getHours()
   const windowAt = (offset) => {
@@ -1381,7 +1389,7 @@ test('窗口很窄时弹层不能溢出屏幕（368 -> 视口宽 - 16）', () =>
 
 test('判定页事件行两行封顶：仓库 + 右对齐时间，第二行结果带编号', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = new Date(Date.now() - 600000).toISOString()
   const snap = {
     loading: false, error: null,
@@ -1401,7 +1409,7 @@ test('判定页事件行两行封顶：仓库 + 右对齐时间，第二行结�
 
 test('判定页时间线按天分组：今天 / 昨天 有分节标题', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const hours = (n) => new Date(Date.now() - n * 3600000).toISOString()
   // 今天某个时刻（若还没到，就用一分钟前），保证「今天」分组与运行时区无关
   const todayAt = (h, m) => {
@@ -1432,7 +1440,7 @@ test('判定页时间线按天分组：今天 / 昨天 有分节标题', () => {
 
 test('总览每条守都带三个动作按钮（立刻 / 暂停或恢复 / 删除）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -1455,7 +1463,7 @@ test('总览每条守都带三个动作按钮（立刻 / 暂停或恢复 / 删�
 
 test('判定页空态也给路径：说明 + 去添加按钮（不是一句「还没有主理鱼」）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { sessionGoal: null, sessionTitle: 's', credentials: {}, watchers: [] },
@@ -1544,7 +1552,7 @@ test('弹层指标用官方「数值强 + 单位弱」两段（不是一句 1 / 
 
 test('面板统计条与弹层指标共用同一个 Stat（都是 dt-stat + dt-stat-value）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -1567,7 +1575,7 @@ test('面板统计条与弹层指标共用同一个 Stat（都是 dt-stat + dt-s
 
 test('点统计数字能筛选：stateFilter=error 时只剩异常那条，并且「异常」是按下态', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -1646,7 +1654,7 @@ test('首帧 304 不该把面板卡在「正在读取」：本地没有 body 时
   // query 是契约的一部分：按 pathname 找调用，同时逐条断言完整 URL，不能用 endsWith 把 query 隐藏掉。
   const stateCalls = () => calls.filter((c) => new URL(c.url, 'http://fixture.local').pathname === '/session-superagent/state')
   const { registrations, render } = loadClient({ fetch: fakeFetch })
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'sidebar.right.pane.tab' && r.opts.key === 'dsh-session-superagent/session')
   const findRefresh = (tree) => walk(tree).find((n) => n.props && typeof n.props.onClick === 'function'
     && walk(n).some((x) => x.type === '#text' && x.text === '刷新'))
 
@@ -1670,7 +1678,7 @@ test('首帧 304 不该把面板卡在「正在读取」：本地没有 body 时
   assert.ok(got && Array.isArray(got.watchers) && got.watchers.length === 2, 'load 要拿到能渲染的 body')
 })
 
-test('主面板 sessionId 为空或缺失时保持原 /state 请求，不追加空 query', async () => {
+test('全局主面板显式请求 scope=global，不追加空 sessionId query', async () => {
   for (const props of [{ sessionId: '' }, {}]) {
     const calls = []
     const { registrations, render } = loadClient({
@@ -1679,14 +1687,14 @@ test('主面板 sessionId 为空或缺失时保持原 /state 请求，不追加�
         return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ watchers: [] }) }
       },
     })
-    const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+    const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
     const tree = render(desk, deskQueue({ loading: true, error: null, body: null }), props)
     const refresh = walk(tree).find((n) => n.props && typeof n.props.onClick === 'function'
       && walk(n).some((x) => x.type === '#text' && x.text === '刷新'))
     assert.ok(refresh, '面板上找不到「刷新」按钮')
     await refresh.props.onClick()
     assert.deepEqual(calls.filter((url) => new URL(url, 'http://fixture.local').pathname === '/session-superagent/state'),
-      ['/session-superagent/state'], '空 sessionId 不得变成 ?sessionId= 或 ?sessionId=undefined')
+      ['/session-superagent/state?scope=global'], '全局读取必须显式 scope=global，且不得追加空 sessionId')
   }
 })
 
@@ -1709,7 +1717,7 @@ test('编辑 Gitee 守保存时必须把 `gitee:` 前缀补回 repo（0.10.12 �
       return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
     },
   })
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   // 真 /state 的形状：repo 是**规范化后**的 owner/name，provider 单独一个字段，
   // id 才是带前缀的那个（`gitee:owner/name#session-…`）。
   const repo = 'iJetLi/deepseek-harness-codearts'
@@ -1769,7 +1777,7 @@ test('保存体的 repo 必须能被服务端 parseRepoSpec 原样解析回同�
         return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
       },
     })
-    const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+    const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
     const snap = {
       loading: false, error: null,
       body: {
@@ -1830,7 +1838,7 @@ test('编辑 PR 守：保存体必须带 watchKind=pr，id 仍能解析回 pr: �
       return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
     },
   })
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -1887,7 +1895,7 @@ test('脏数据（真 /state 的形状）渲染后不许出现 undefined / NaN /
   const { loadClient } = await import('./fixtures/panel-harness.mjs')
   const { dirtyWatcher, dirtyState } = await import('./fixtures/panel-harness.mjs')
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = dirtyState([
     dirtyWatcher('acme/dirty-one'),
     dirtyWatcher('acme/dirty-two', { enabled: false, lastError: 'HTTP 401: Bad credentials' }),
@@ -1905,7 +1913,7 @@ test('脏数据（真 /state 的形状）渲染后不许出现 undefined / NaN /
 test('两个会话守同一仓库时，「需要关注」不能出现两条一模一样的条目（T34：知识库那条规则从没落地）', async () => {
   const { loadClient, walk, deskQueue, watcher } = await import('./fixtures/panel-harness.mjs')
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -1941,7 +1949,7 @@ test('设置页左栏点哪一项，右边就换哪一块（客户实拍：永�
   // 槽位：snapshot / tab / ... / settingsSection（第 15 个）
   const queue = (section) => [snap, 'settings', null, deskForm, '', '', false, [], null, {}, '', false, null, false, section, null, null, false, null, '', '']
   const bodyOf = (section) => {
-    const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+    const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
     const text = walk(render(desk, queue(section))).filter((n) => typeof n.text === 'string').map((n) => n.text).join(' | ')
     const at = text.indexOf('会话 goal |')   // 跳过多出来的导航按钮
     return at >= 0 ? text.slice(at + 10) : text
@@ -1966,7 +1974,7 @@ test('设置页左栏点哪一项，就调用哪个 setter（T38：setter 以前
     },
   }
   const queue = (section) => [snap, 'settings', null, deskForm, '', '', false, [], null, {}, '', false, null, false, section, null, null, false, null, '', '']
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const tree = walk(render(desk, queue('source')))
   const navBtn = tree.filter((n) => n.type === 'button' && (n.props.children || []).join('') === '凭证')
   assert.equal(navBtn.length, 1, '设置页左栏要有「凭证」这一项')
@@ -1989,7 +1997,7 @@ test('页签点哪一项就切到哪一项（T38 M6：把 onChange 改成空函�
       watchers: [watcher('a/b')],
     },
   }
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const tree = walk(render(desk, deskQueue(snap, null, {}, 'overview')))
   const tab = tree.filter((n) => n.type === 'button' && (n.props.children || []).join('') === '判定')
   assert.equal(tab.length, 1, '要有「判定」页签')
@@ -2024,7 +2032,7 @@ test('弹层按锚点定位，并在窗口边缘夹住（T38：这 5 个 if 从�
 test('面板能设「只理这些人提的」，且不会把已有名单清空（T：官方 Policy 的最小版）', async () => {
   const { loadClient, walk, watcher } = await import('./fixtures/panel-harness.mjs')
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -2045,7 +2053,7 @@ test('面板能设「只理这些人提的」，且不会把已有名单清空�
 test('总览要显示「有动作率」（《为什么做这个产品》：没有这个数，「不打断」只是信念）', async () => {
   const { loadClient, walk, watcher, deskQueue } = await import('./fixtures/panel-harness.mjs')
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -2068,7 +2076,7 @@ test('新建表单能一次设好作者名单、会话上限与隔离保留策�
       return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, warnings: [] }) }
     },
   })
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'sidebar.right.pane.tab' && r.opts.key === 'dsh-session-superagent/session')
   const snap = {
     loading: false, error: null,
     body: {
@@ -2112,7 +2120,7 @@ test('编辑过滤字段时，已有作者名单和指派人不能被顺带清�
       return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
     },
   })
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -2162,7 +2170,7 @@ test('只看新评论 Switch：类型显隐、真实打开回读、编辑保存�
       return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
     },
   })
-  const desk = client.registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = client.registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const filters = { labels: ['bug'], ignoreLabels: ['old'], onlyAssigned: true, onlyNewComments: true, assignee: 'octocat', allowAuthors: ['alice'] }
   const snap = {
     loading: false, error: null,
@@ -2197,7 +2205,7 @@ test('只看新评论 Switch：类型显隐、真实打开回读、编辑保存�
 
 test('列表显示作者白名单与 ack 标签，编辑器也能改标签（T40 W3/W4）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -2239,7 +2247,7 @@ test('追溯结果进入判定页内联时间线，不再只发一条 Toast（�
   const { registrations, render, stateCalls } = loadClient({
     fetch: async () => ({ ok: true, status: 200, text: async () => JSON.stringify(payload) }),
   })
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -2266,7 +2274,7 @@ test('追溯结果进入判定页内联时间线，不再只发一条 Toast（�
 
 test('通用图标直接复用 DSH 官方 16×16 path，derived 图标仍保持 24×24', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: { credentials: {}, gh: { ok: true }, defaults: {}, watchers: [watcher('a/b')] },
@@ -2282,7 +2290,7 @@ test('通用图标直接复用 DSH 官方 16×16 path，derived 图标仍保持 
 
 test('升级横幅直达「版本与更新」分区，不只切到设置页（官方 settingsRoute 最小等价）', async () => {
   const { registrations, render, stateCalls } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = { loading: false, error: null, body: { credentials: {}, gh: { ok: true }, defaults: {}, watchers: [watcher('a/b')] } }
   const queue = deskQueue(snap, null, {}, 'overview', '', false, { current: '1.0.0', latest: '1.0.1', hasUpdate: true, command: 'dsh plugin update' })
   const nodes = walk(render(desk, queue))
@@ -2295,7 +2303,7 @@ test('升级横幅直达「版本与更新」分区，不只切到设置页（�
 
 test('更新检查失败显示「检查失败」，不能误报「已是最新」', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = { loading: false, error: null, body: { credentials: {}, gh: { ok: true }, defaults: {}, watchers: [watcher('a/b')] } }
   const queue = deskQueue(snap, null, {}, 'settings', '', false, { current: '1.0.0', latest: null, hasUpdate: false, error: 'network down' })
   queue[14] = 'update'
@@ -2411,7 +2419,7 @@ test('N2：上一次删除失败不得残留到下一次删除确认框，本次
 
 test('首次 loading/error 不渲染零统计、Onboarding 或业务页；旧快照失败仍保留', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const scenarios = [
     { snap: { loading: true, error: null, body: null }, expected: '正在读取…' },
     { snap: { loading: false, error: 'Failed to fetch', body: null }, expected: '读不到面板数据' },
@@ -2509,6 +2517,11 @@ function loadStatefulPanel({ fetch, queue }) {
   const registrations = []
   const ctx = {
     effect: (fn) => fn(),
+    get: (name) => ({
+      layout: { selectPanel() {} },
+      sidebarRight: { openTab() {} },
+      sidebarRightTabs: { register() { return () => {} } },
+    })[name],
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) { registrations.push({ opts, Component }); return () => {} },
@@ -2518,7 +2531,7 @@ function loadStatefulPanel({ fetch, queue }) {
     if (name === 'react') return React
     throw new Error('unexpected require: ' + name)
   }).apply(ctx)
-  const desk = registrations.find((item) => item.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((item) => item.opts.name === 'sidebar.right.pane.tab' && item.opts.key === 'dsh-session-superagent/session')
   assert.ok(desk, '找不到主面板注册')
   const traceIndex = deskQueue({ loading: true, error: null, body: null }).length - 3
   const render = () => {
@@ -2766,7 +2779,7 @@ test('N3：条件请求的 ETag 按作用域分开，圆环的 /state 不得串�
   // 终审 N3：模块级 stateEtag 被 Orbit（全局 /state）与主面板（/state?sessionId=…）共用，
   // 服务端 etag 按整份 body 求值，两个作用域必然对不上 → 面板的条件请求永远打不中 304。
   const etags = {
-    '/session-superagent/state': 'W/"global-1"',
+    '/session-superagent/state?scope=global': 'W/"global-1"',
     '/session-superagent/state?sessionId=s1': 'W/"s1-1"',
     '/session-superagent/state?sessionId=s2': 'W/"s2-1"',
   }
@@ -2789,9 +2802,11 @@ test('N3：条件请求的 ETag 按作用域分开，圆环的 /state 不得串�
       return { ok: true, status: 200, headers: { get: () => current }, text: async () => JSON.stringify({ watchers: [] }) }
     },
   })
-  const desk = client.registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const globalDesk = client.registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
+  const sessionDesk = client.registrations.find((r) => r.opts.name === 'sidebar.right.pane.tab' && r.opts.key === 'dsh-session-superagent/session')
   const snapshot = { loading: false, error: null, body: { sessionGoal: null, sessionTitle: 'x', credentials: {}, watchers: [] } }
   const refreshOf = (props) => {
+    const desk = props && props.sessionId ? sessionDesk : globalDesk
     const nodes = walk(client.render(desk, deskQueue(snapshot), props))
     const found = nodes.find((node) => node.props && typeof node.props.onClick === 'function'
       && walk(node).some((child) => child.type === '#text' && child.text === '刷新'))
@@ -2829,18 +2844,18 @@ test('N3：条件请求的 ETag 按作用域分开，圆环的 /state 不得串�
   assert.equal(Boolean(globalAgain && globalAgain.notModified), true)
 
   assert.deepEqual(calls.map((call) => call.scope), [
-    '/session-superagent/state',
-    '/session-superagent/state',
+    '/session-superagent/state?scope=global',
+    '/session-superagent/state?scope=global',
     '/session-superagent/state?sessionId=s1',
     '/session-superagent/state?sessionId=s1',
     '/session-superagent/state?sessionId=s2',
-    '/session-superagent/state',
+    '/session-superagent/state?scope=global',
   ], '每次请求都必须落在自己的作用域上')
 })
 
 test('W2：仅重新打开与重新打开加报错都计入问题数和问题筛选，健康守仍排除', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -2868,7 +2883,7 @@ test('W2：仅重新打开与重新打开加报错都计入问题数和问题筛
 
 test('W5：运行时事件跨守按时间倒序，只渲染全局最近 20 条并显示来源', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const repos = ['a/one', 'b/two', 'c/three', 'd/four']
   const base = Date.parse('2026-11-06T00:00:00.000Z')
   const watchers = repos.map((repo, watcherIndex) => watcher(repo, {
@@ -2912,7 +2927,7 @@ function watcherIndexFor(target, watchers) {
 
 test('W7：同 repo 多 session 的运行事件 key 唯一，并含 session/repo/number/kind/time', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const at = '2026-11-06T08:00:00.000Z'
   const watchers = ['session-alpha', 'session-beta'].map((sessionId) => watcher('same/repo', {
     id: 'same/repo#' + sessionId, sessionId,
@@ -2940,7 +2955,7 @@ test('W7：同 repo 多 session 的运行事件 key 唯一，并含 session/repo
 
 test('W6：最近被过滤按全局时间排序，摘要与展开均含 repo/session/编号/原因/time，key 不冲突', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const base = Date.parse('2026-11-06T00:00:00.000Z')
   const definitions = [
     ['same/repo', 'session-alpha', [0, 5]],
@@ -2988,7 +3003,7 @@ test('W6：最近被过滤按全局时间排序，摘要与展开均含 repo/ses
 
 test('W8：搜索/非搜索筛选/零守空态分流，恢复按钮真实清除全部条件', () => {
   const { registrations, render, stateCalls, resetStateCalls } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snap = {
     loading: false, error: null,
     body: {
@@ -3337,7 +3352,7 @@ test('PR 面板：整表 disabled（无会话）时监控类型与执行方式�
 
 test('PR 面板：打开已有 PR 类型 watcher 时四项的值来自服务端快照', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((registration) => registration.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((registration) => registration.opts.name === 'main' && registration.opts.key === 'session-superagent')
   const item = watcher('a/b', {
     id: 'a/b#session-a/b', kind: 'pr', audit: true, adversarialAudit: false, auditMode: 'inline',
   })
@@ -3358,7 +3373,7 @@ test('PR 面板：打开已有 PR 类型 watcher 时四项的值来自服务端�
 
 test('W13：总览/判定/触发/设置的每个 Section 标题都是 h2，视觉 class 保留', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((item) => item.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((item) => item.opts.name === 'main' && item.opts.key === 'session-superagent')
   const snap = raceSnapshot()
   const scenarios = [['overview'], ['judge'], ['trigger'], ...['source', 'creds', 'update', 'diagnose', 'goal'].map((section) => ['settings', section])]
   for (const [tab, section] of scenarios) {
@@ -3379,7 +3394,7 @@ test('W14：追溯、首败/stale、持久操作与更新失败均有独立 aler
   assert.equal(trace[0].props['aria-atomic'], 'true')
 
   const { registrations, render } = loadClient()
-  const desk = registrations.find((item) => item.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((item) => item.opts.name === 'main' && item.opts.key === 'session-superagent')
   const queue = deskQueue({ ...raceSnapshot(), error: 'Failed to fetch' })
   queue[2] = { ok: false, text: 'save failed' }
   let nodes = walk(render(desk, queue))
@@ -3888,7 +3903,7 @@ test('Orbit 小视口删除确认 Modal 自身可滚动且 header/description/fo
 
 test('W17：fallback Toast 以 item.id 为 key，连续通知重新挂载且 hold 与 timer 对齐', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((item) => item.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((item) => item.opts.name === 'main' && item.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -4056,7 +4071,7 @@ const gateDraft = (rules, semantic) => ({
 
 test('设置页左栏多了「门禁」，点它切到门禁分区', () => {
   const { registrations, render, stateCalls, resetStateCalls } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const nodes = walk(render(desk, deskQueue(gateSnapshot(), null, {}, 'settings')))
   const nav = nodes.filter((n) => n.type === 'button' && (n.props.children || []).join('') === '门禁')
   assert.equal(nav.length, 1, '设置页左栏要有「门禁」')
@@ -4067,7 +4082,7 @@ test('设置页左栏多了「门禁」，点它切到门禁分区', () => {
 
 test('门禁作用域：默认只读，我的 / 项目可改', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const readOnlyNodes = walk(render(desk, gateQueue({ scope: 'default' })))
   const readOnlySwitches = readOnlyNodes.filter((n) => n.type === 'button' && n.props.role === 'switch'
     && String(n.props.id || '').startsWith('gate-rule-'))
@@ -4092,7 +4107,7 @@ test('门禁作用域：默认只读，我的 / 项目可改', () => {
 
 test('门禁作用域切换：点「项目」写入 scope=project', () => {
   const { registrations, render, stateCalls, resetStateCalls } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const nodes = walk(render(desk, gateQueue({ scope: 'user' })))
   const radios = nodes.filter((n) => n.type === 'button' && n.props.role === 'radio')
   assert.deepEqual(radios.map((n) => (n.props.children || []).join('')), ['默认（只读）', '我的', '项目'],
@@ -4107,7 +4122,7 @@ test('门禁作用域切换：点「项目」写入 scope=project', () => {
 
 test('门禁规则卡：中文 label / 说明，正则默认收在「高级」里', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const closed = walk(render(desk, gateQueue({ scope: 'user' })))
   const closedText = gateText(closed)
   assert.ok(closedText.includes('禁止凭证与密钥'), '规则 label 要中文可读：' + closedText.slice(0, 200))
@@ -4182,7 +4197,7 @@ test('门禁保存：关掉的规则写 enabled:false，改过的规则一起落
 
 test('门禁开关：卡片状态取四层合并结果，停用的规则显示为关', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const disabledSecret = { ...GATE_SECRET_RULE, enabled: false }
   const payload = gateApiWithLayer('user', [disabledSecret], [disabledSecret, GATE_PATH_RULE])
 
@@ -4210,7 +4225,7 @@ test('门禁开关：只切开关也算改动，落盘只写这一条 enabled:fa
     draft: gateDraft([{ ...GATE_SECRET_RULE, enabled: false }, { ...GATE_PATH_RULE, enabled: true }], GATE_SEMANTIC_DERIVED),
   })
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const nodes = walk(render(desk, queue))
   assert.ok(gateText(nodes).includes('未保存'), '只切开关也要算「未保存」：' + gateText(nodes).slice(0, 240))
   const save = nodes.find((n) => n.type === 'button' && (n.props.children || []).join('') === '保存')
@@ -4391,7 +4406,7 @@ test('门禁「优化提示词」：成功写回输入框，失败给错误', as
 
 test('门禁模型下拉：列表来自 /gates/models，当前值不会丢', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const nodes = walk(render(desk, gateQueue({
     scope: 'user',
     models: { repo: 'E:/work/demo', list: [{ id: 'gpt-x', label: 'GPT X' }], loading: false, error: '' },
@@ -4637,7 +4652,7 @@ test('门禁停用：停用来自本地层时如实说明本地优先，不承�
     },
   }
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const nodes = walk(render(desk, gateQueue({ scope: 'user', data })))
   const secretSwitch = nodes.find((n) => n.type === 'button' && n.props.id === 'gate-rule-secret-switch')
   assert.equal(secretSwitch.props['aria-checked'], false, '合并后是停用')
@@ -4691,7 +4706,7 @@ test('门禁项目层：semantic:false 时底部文案与预览都用「当前�
 
   // 正对照：语义开着时预览区仍然如实说「会追加」。
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const enabledNodes = walk(render(desk, gateQueue({ scope: 'user', trigger: 'merge', draft: gateDraft() })))
   assert.ok(gateText(enabledNodes).includes('这类触发会追加语义复审'), '语义开着时预览区要说会追加')
 })
@@ -4858,7 +4873,7 @@ test('门禁 dirty 切作用域：先确认；取消保留草稿，确认才放�
     GATE_SEMANTIC_DERIVED,
   )
   const { registrations, render, stateCalls, resetStateCalls } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
 
   // 没有草稿：保持原行为，直接切（正对照，防止「一律要确认」变成新的噪音）。
   const clean = walk(render(desk, gateQueue({ scope: 'user' })))
@@ -4957,7 +4972,7 @@ test('门禁 dirty 切仓库：不静默丢草稿；写盘仍落到面板数据�
 
   // 两个确认互不吞：取消一次作用域切换后，之前「换仓库 → 保留草稿」的决定不能被抹掉。
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const both = walk(render(desk, gateQueue({
     scope: 'user', draft: dirtyDraft, snapshot,
     pending: { type: 'scope', next: 'project', repoHeld: true },
@@ -4970,7 +4985,7 @@ test('门禁 dirty 切仓库：不静默丢草稿；写盘仍落到面板数据�
 
 test('门禁：状态只留在 GateSettings（主面板 24 + 门禁 12 = 36 槽，多一个都要抛）（U1-F）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   assert.equal(deskQueue(gateSnapshot()).length, 24, '主面板仍然只有 24 个状态槽')
   assert.equal(gateQueue().length, 36, '门禁页 fixture = 主面板 24 + GateSettings 12')
   // 多传一个槽必须被抓出来：这条同时把「组件准确用了 36 个 hook」变成断言
@@ -5406,7 +5421,7 @@ const gateMarkDirty = (panel, scope) => {
 
 test('门禁模型下拉：不属于面板仓库的模型列表不显示（U5-M0）', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const nodes = walk(render(desk, gateQueue({
     scope: 'user',
     models: { repo: 'E:/work/other', list: [{ id: 'm-other', label: 'other 模型' }], loading: false, error: '' },
@@ -5966,13 +5981,10 @@ test('浏览器证据入库：门禁/模型场景留在正式 Chromium 套件里
   assert.ok(source.includes('不是真实 WebView'), '必须写明 loopback fixture 不是真实 WebView')
 })
 
-// ── 页签名称（conversation.view 的 label）────────────────────────────────────
-// 宿主只在 register()/dispose() 时重算页签文案：ui-conversation 的 viewTabs() 读
-// resolveSlotLabel(entry.options.label)，而刷新由 slots.subscribe('conversation.view') 驱动
-// （register/dispose → markDirty → flush）。所以改名必须「先释放、再按同 id/order/component
-// 重注册」，原地改 options.label 不会重画。名称来源只有一份品牌语义（issue #11 的 brandName）：
+// ── 入口名称（左侧全局中枢 / 会话右栏标题）───────────────────────────────────
+// 改名通过 subscribeTabName 先释放再重注册存活入口。名称来源只有一份品牌语义：
 //   本地显示覆盖（本浏览器 localStorage）> /state.brandName > 默认「主理鱼」。
-// 覆盖只改这一个页签，不动面板标题 / 唤醒抬头 / ack 标签。
+// 覆盖只改左栏/右栏标题，不动唤醒抬头 / ack 标签。
 
 const TAB_NAME_KEY = 'dsh-session-superagent.tab-name'
 const TAB_NAME_MAX_POINTS = 24
@@ -6003,7 +6015,8 @@ const memoryStorage = (initial = {}, options = {}) => {
   }
 }
 
-const liveDesk = (client) => client.liveRegistrations().find((r) => r.opts.id === 'session-superagent-desk')
+const liveSidebar = (client) => client.liveRegistrations().find((r) => r.opts.name === 'sidebar.panellist' && r.opts.id === 'session-superagent')
+const globalPanel = (client) => client.liveRegistrations().find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
 const nodeTextOf = (node) => (node && node.props
   ? (node.props.children || []).filter((child) => typeof child === 'string').join('')
   : '')
@@ -6026,24 +6039,24 @@ const stateResponse = (body) => ({
   ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(body),
 })
 
-test('页签名称默认仍是「主理鱼」：没有本地覆盖、也没有 /state 品牌名', () => {
+test('入口名称默认仍是「主理鱼」：没有本地覆盖、也没有 /state 品牌名', () => {
   const client = loadClient()
-  const desk = liveDesk(client)
-  assert.ok(desk, 'conversation.view 必须有一条注册')
-  assert.equal(desk.opts.label, '主理鱼', '默认值必须是「主理鱼」')
-  assert.equal(desk.opts.order, 30, '改名不能顺带动 order')
+  const sidebar = liveSidebar(client)
+  assert.ok(sidebar, 'sidebar.panellist 必须有一条注册')
+  assert.equal(sidebar.opts.label(), '主理鱼', '默认值必须是「主理鱼」')
+  assert.equal(sidebar.opts.order, 20, '改名不能顺带动 order')
 })
 
 test('页签跟随 /state.brandName：响应一到就重画，且不留下第二条注册', async () => {
   const client = loadClient({ fetch: async () => stateResponse({ brandName: '夜莺' }) })
-  assert.equal(liveDesk(client).opts.label, '主理鱼', '首帧只有默认值（/state 还没回来）')
-  const nodes = walk(client.render(liveDesk(client), deskQueue(brandSnapshot('夜莺'))))
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', '首帧只有默认值（/state 还没回来）')
+  const nodes = walk(client.render(globalPanel(client), deskQueue(brandSnapshot('夜莺'))))
   const refresh = buttonByText(nodes, '刷新')
   assert.ok(refresh, '面板要能触发一次 /state 读取')
   await refresh.props.onClick()
-  assert.equal(liveDesk(client).opts.label, '夜莺', '/state 到了页签就要跟着变')
+  assert.equal(liveSidebar(client).opts.label(), '夜莺', '/state 到了页签就要跟着变')
   assert.equal(
-    client.liveRegistrations().filter((r) => r.opts.id === 'session-superagent-desk').length,
+    client.liveRegistrations().filter((r) => r.opts.name === 'sidebar.panellist' && r.opts.id === 'session-superagent').length,
     1, '重注册不能留下第二条同 id 的注册',
   )
 })
@@ -6053,38 +6066,38 @@ test('本地覆盖优先于 /state.brandName（优先级：本地覆盖 > brandN
     localStorage: memoryStorage({ [TAB_NAME_KEY]: '夜猫' }),
     fetch: async () => stateResponse({ brandName: '夜莺' }),
   })
-  assert.equal(liveDesk(client).opts.label, '夜猫', '刷新后要读回本地覆盖')
-  const nodes = walk(client.render(liveDesk(client), deskQueue(brandSnapshot('夜莺'))))
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '刷新后要读回本地覆盖')
+  const nodes = walk(client.render(globalPanel(client), deskQueue(brandSnapshot('夜莺'))))
   await buttonByText(nodes, '刷新').props.onClick()
-  assert.equal(liveDesk(client).opts.label, '夜猫', '品牌名到了也不能盖掉本地覆盖')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '品牌名到了也不能盖掉本地覆盖')
 })
 
 test('设置→来源改页签名称：保存后页签立刻更新，并写进本就地存储', () => {
   const storage = memoryStorage()
   const client = loadClient({ localStorage: storage })
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
-  const input = tabNameInput(walk(client.render(liveDesk(client), queue)))
+  const input = tabNameInput(walk(client.render(globalPanel(client), queue)))
   assert.ok(input, '设置→来源要有「页签名称」输入框')
   assert.equal(input.props.value, '主理鱼', '输入框要带当前名称（不是空的）')
   input.props.onChange({ target: { value: '夜猫' } })
   queue[queue.length - 1] = '夜猫'
-  const save = buttonByText(walk(client.render(liveDesk(client), queue)), '保存名称')
+  const save = buttonByText(walk(client.render(globalPanel(client), queue)), '保存名称')
   assert.ok(save, '要有保存按钮')
   save.props.onClick()
-  assert.equal(liveDesk(client).opts.label, '夜猫', '保存后当前 GUI 的页签要立刻变')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '保存后当前 GUI 的页签要立刻变')
   assert.deepEqual(storage.calls.set.at(-1), [TAB_NAME_KEY, '夜猫'], '要写进 localStorage')
 })
 
 test('页签名称留空保存 = 恢复默认：清掉本地覆盖（回到 brandName）', () => {
   const storage = memoryStorage({ [TAB_NAME_KEY]: '夜猫' })
   const client = loadClient({ localStorage: storage })
-  assert.equal(liveDesk(client).opts.label, '夜猫')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫')
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
-  const input = tabNameInput(walk(client.render(liveDesk(client), queue)))
+  const input = tabNameInput(walk(client.render(globalPanel(client), queue)))
   input.props.onChange({ target: { value: '   ' } })
   queue[queue.length - 1] = '   '
-  buttonByText(walk(client.render(liveDesk(client), queue)), '保存名称').props.onClick()
-  assert.equal(liveDesk(client).opts.label, '主理鱼', '空值（含全空格）要恢复默认')
+  buttonByText(walk(client.render(globalPanel(client), queue)), '保存名称').props.onClick()
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', '空值（含全空格）要恢复默认')
   assert.deepEqual(storage.calls.remove, [TAB_NAME_KEY], '要真的删掉这条覆盖，不能写空串')
   assert.equal(storage.map.size, 0)
 })
@@ -6093,18 +6106,18 @@ test('localStorage 读取抛异常时安全回退默认（不把插件 apply 弄
   const client = loadClient({
     localStorage: memoryStorage({ [TAB_NAME_KEY]: '夜猫' }, { readError: new Error('SecurityError: 禁止访问') }),
   })
-  assert.equal(liveDesk(client).opts.label, '主理鱼', '读不到就回落默认，不能抛')
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', '读不到就回落默认，不能抛')
 })
 
 test('localStorage 写不进去时：本次会话内照样生效，但要如实说「刷新后回到默认」', () => {
   const storage = memoryStorage({}, { writeError: new Error('QuotaExceededError') })
   const client = loadClient({ localStorage: storage })
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
-  const input = tabNameInput(walk(client.render(liveDesk(client), queue)))
+  const input = tabNameInput(walk(client.render(globalPanel(client), queue)))
   input.props.onChange({ target: { value: '夜猫' } })
   queue[queue.length - 1] = '夜猫'
-  buttonByText(walk(client.render(liveDesk(client), queue)), '保存名称').props.onClick()
-  assert.equal(liveDesk(client).opts.label, '夜猫', '写盘失败也要在本次会话内生效')
+  buttonByText(walk(client.render(globalPanel(client), queue)), '保存名称').props.onClick()
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '写盘失败也要在本次会话内生效')
   const toast = client.stateCalls().map((call) => call.next)
     .filter((next) => next && typeof next === 'object' && typeof next.text === 'string').pop()
   assert.ok(toast, '保存要有 Toast 反馈')
@@ -6115,14 +6128,14 @@ test('localStorage 写不进去时：本次会话内照样生效，但要如实�
 test('页签名称按码点截断，不会劈开代理对（表情不会被截成半个）', () => {
   const client = loadClient({ localStorage: memoryStorage() })
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
-  const input = tabNameInput(walk(client.render(liveDesk(client), queue)))
+  const input = tabNameInput(walk(client.render(globalPanel(client), queue)))
   input.props.onChange({ target: { value: '😀'.repeat(30) } })
   const clamped = client.stateCalls().map((call) => call.next).filter((next) => typeof next === 'string').pop()
   assert.equal([...clamped].length, TAB_NAME_MAX_POINTS, '输入时就要按码点截断：' + JSON.stringify(clamped))
   assert.ok([...clamped].every((ch) => ch === '😀'), '截断后每个码点都必须是完整表情')
   queue[queue.length - 1] = '😀'.repeat(30)
-  buttonByText(walk(client.render(liveDesk(client), queue)), '保存名称').props.onClick()
-  const label = liveDesk(client).opts.label
+  buttonByText(walk(client.render(globalPanel(client), queue)), '保存名称').props.onClick()
+  const label = liveSidebar(client).opts.label()
   assert.equal([...label].length, TAB_NAME_MAX_POINTS, '保存也要按码点截断')
   assert.equal(label, '😀'.repeat(TAB_NAME_MAX_POINTS))
 })
@@ -6131,26 +6144,26 @@ test('页签名称复用 normalizeBrandName 的规则（trim / 压平换行 / �
   const { normalizeBrandName } = await import('../lib/watch.js')
   for (const raw of ['', '   ', '夜莺', ' a\nb ', '\n', 'x'.repeat(40)]) {
     const client = loadClient({ fetch: async () => stateResponse({ brandName: raw }) })
-    const nodes = walk(client.render(liveDesk(client), deskQueue(brandSnapshot(raw))))
+    const nodes = walk(client.render(globalPanel(client), deskQueue(brandSnapshot(raw))))
     await buttonByText(nodes, '刷新').props.onClick()
     const expected = [...normalizeBrandName(raw)].slice(0, TAB_NAME_MAX_POINTS).join('')
-    assert.equal(liveDesk(client).opts.label, expected, '与 lib/watch.js 的规则同源：' + JSON.stringify(raw))
+    assert.equal(liveSidebar(client).opts.label(), expected, '与 lib/watch.js 的规则同源：' + JSON.stringify(raw))
   }
 })
 
-test('改名只重注册一条：同 id / 同 order / 同 component，不重复也不换组件', () => {
+test('改名只重注册一条左栏：同 id / 同 order / 同 component，不重复也不换组件', () => {
   const client = loadClient({ localStorage: memoryStorage() })
-  const first = liveDesk(client)
+  const first = liveSidebar(client)
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
-  tabNameInput(walk(client.render(first, queue))).props.onChange({ target: { value: '夜猫' } })
+  tabNameInput(walk(client.render(globalPanel(client), queue))).props.onChange({ target: { value: '夜猫' } })
   queue[queue.length - 1] = '夜猫'
-  buttonByText(walk(client.render(first, queue)), '保存名称').props.onClick()
-  const second = liveDesk(client)
-  assert.equal(second.opts.id, 'session-superagent-desk')
-  assert.equal(second.opts.order, 30, 'order 必须原样')
-  assert.equal(second.Component, first.Component, 'component 必须原样（换组件会重建面板）')
-  assert.equal(client.liveRegistrations().filter((r) => r.opts.id === 'session-superagent-desk').length, 1)
-  assert.equal(client.registrations.filter((r) => r.opts.id === 'session-superagent-desk').length, 2, '历史里正好两条：旧的已释放')
+  buttonByText(walk(client.render(globalPanel(client), queue)), '保存名称').props.onClick()
+  const second = liveSidebar(client)
+  assert.equal(second.opts.id, 'session-superagent')
+  assert.equal(second.opts.order, 20, 'order 必须原样')
+  assert.equal(second.Component, first.Component, 'component 必须原样')
+  assert.equal(client.liveRegistrations().filter((r) => r.opts.name === 'sidebar.panellist' && r.opts.id === 'session-superagent').length, 1)
+  assert.equal(client.registrations.filter((r) => r.opts.name === 'sidebar.panellist' && r.opts.id === 'session-superagent').length, 2, '历史里正好两条：旧的已释放')
 })
 
 test('恢复默认删不掉覆盖时：页签立刻回默认，但不伪称已持久化（刷新后可能回到旧名）', async () => {
@@ -6159,13 +6172,13 @@ test('恢复默认删不掉覆盖时：页签立刻回默认，但不伪称已�
     { removeError: new Error('SecurityError: 禁止删除') },
   )
   const client = loadClient({ localStorage: storage, fetch: async () => stateResponse({ brandName: '夜莺' }) })
-  assert.equal(liveDesk(client).opts.label, '夜猫', '先读回旧覆盖')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '先读回旧覆盖')
   const queue = deskQueue(brandSnapshot('夜莺'), null, {}, 'settings')
-  const input = tabNameInput(walk(client.render(liveDesk(client), queue)))
+  const input = tabNameInput(walk(client.render(globalPanel(client), queue)))
   input.props.onChange({ target: { value: '' } })
   queue[queue.length - 1] = ''
-  buttonByText(walk(client.render(liveDesk(client), queue)), '恢复默认').props.onClick()
-  assert.equal(liveDesk(client).opts.label, '主理鱼', '删不掉也要在本次会话内立刻回默认')
+  buttonByText(walk(client.render(globalPanel(client), queue)), '恢复默认').props.onClick()
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', '删不掉也要在本次会话内立刻回默认')
   assert.deepEqual(storage.calls.remove, [TAB_NAME_KEY], '必须真的尝试删除，不能只改内存')
   assert.equal(storage.map.get(TAB_NAME_KEY), '夜猫', '桩里删除失败：旧值仍在（模拟刷新后会读回它）')
   const toast = client.stateCalls().map((call) => call.next)
@@ -6176,15 +6189,15 @@ test('恢复默认删不掉覆盖时：页签立刻回默认，但不伪称已�
   assert.ok(!toast.text.includes('已恢复默认：'), '不能使用「已恢复默认：X」这种持久化口径')
 
   // 内存里的覆盖确实清掉了：品牌名一到，页签跟随 brandName（若覆盖还在，会仍是「夜猫」）
-  await buttonByText(walk(client.render(liveDesk(client), queue)), '刷新').props.onClick()
-  assert.equal(liveDesk(client).opts.label, '夜莺', '覆盖已清：品牌名到了要能接管页签')
+  await buttonByText(walk(client.render(globalPanel(client), queue)), '刷新').props.onClick()
+  assert.equal(liveSidebar(client).opts.label(), '夜莺', '覆盖已清：品牌名到了要能接管页签')
 })
 
 test('其它页面改了页签名：storage 事件跟随新名，删除则回默认（始终只有一条注册）', () => {
   const storage = memoryStorage()
   const client = loadClient({ localStorage: storage })
-  assert.equal(liveDesk(client).opts.label, '主理鱼', '默认注册')
-  const deskCount = () => client.liveRegistrations().filter((r) => r.opts.id === 'session-superagent-desk').length
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', '默认注册')
+  const deskCount = () => client.liveRegistrations().filter((r) => r.opts.name === 'sidebar.panellist' && r.opts.id === 'session-superagent').length
   assert.equal(client.windowListenerCount('storage'), 1, 'apply 要挂一个 storage 监听')
 
   // 另一个标签页写入了**新的自定义名**：不能清掉覆盖回品牌名，要同步成新名
@@ -6193,17 +6206,17 @@ test('其它页面改了页签名：storage 事件跟随新名，删除则回默
     client.dispatchWindowEvent('storage', { key: TAB_NAME_KEY, newValue: '夜猫' }),
     1, 'storage 事件要真的被调用',
   )
-  assert.equal(liveDesk(client).opts.label, '夜猫', '别的页面设了新名字要跟随，不能回品牌名')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '别的页面设了新名字要跟随，不能回品牌名')
   assert.equal(deskCount(), 1, '同 id 重注册，只有一条')
 
   // 与本键无关的写入不得动页签
   client.dispatchWindowEvent('storage', { key: 'dsh-session-superagent.other', newValue: '别的东西' })
-  assert.equal(liveDesk(client).opts.label, '夜猫', '无关 key 不能改页签')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '无关 key 不能改页签')
 
   // 另一个页面恢复默认（删除覆盖）→ 回品牌名 / 默认
   storage.removeItem(TAB_NAME_KEY)
   client.dispatchWindowEvent('storage', { key: TAB_NAME_KEY, newValue: null })
-  assert.equal(liveDesk(client).opts.label, '主理鱼', '删除事件回默认')
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', '删除事件回默认')
   assert.equal(deskCount(), 1, '删除也是一次重注册，仍然只有一条')
 })
 
@@ -6222,19 +6235,19 @@ test('M1：外部改了页签名后，干净草稿跟随新名（不会把旧名
   const storage = memoryStorage()
   const client = loadClient({ localStorage: storage })
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
-  const input = tabNameInput(walk(client.render(liveDesk(client), queue)))
+  const input = tabNameInput(walk(client.render(globalPanel(client), queue)))
   assert.equal(input.props.value, '主理鱼', '首帧草稿 = 当前名字')
   client.runEffects()
 
   storage.setItem(TAB_NAME_KEY, '夜猫')
   client.dispatchWindowEvent('storage', { key: TAB_NAME_KEY, newValue: '夜猫' })
-  assert.equal(liveDesk(client).opts.label, '夜猫', '页签要跟随别的页面设的新名')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '页签要跟随别的页面设的新名')
   assert.equal(lastDraftValue(client), '夜猫', '干净草稿必须跟着变成新名')
 
   // 再点保存时草稿已经是新名：不能把旧名写回去
   const rerendered = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
   rerendered[draftSlot()] = lastDraftValue(client)
-  buttonByText(walk(client.render(liveDesk(client), rerendered)), '保存名称').props.onClick()
+  buttonByText(walk(client.render(globalPanel(client), rerendered)), '保存名称').props.onClick()
   assert.equal(storage.map.get(TAB_NAME_KEY), '夜猫', '保存不得用旧草稿覆盖别人的新名')
 })
 
@@ -6243,49 +6256,49 @@ test('M1：脏草稿不被外部改名覆盖（用户的选择优先）', () => 
   const client = loadClient({ localStorage: storage })
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
   queue[draftSlot()] = '我自己在输'
-  walk(client.render(liveDesk(client), queue))
+  walk(client.render(globalPanel(client), queue))
   client.runEffects()
   storage.setItem(TAB_NAME_KEY, '夜猫')
   client.dispatchWindowEvent('storage', { key: TAB_NAME_KEY, newValue: '夜猫' })
-  assert.equal(liveDesk(client).opts.label, '夜猫', '页签仍然跟随')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫', '页签仍然跟随')
   assert.equal(lastDraftValue(client), '我自己在输', '脏草稿不许被外部事件覆盖')
 })
 
 test('M1：brandName 晚到也要同步干净草稿', async () => {
   const client = loadClient({ fetch: async () => stateResponse({ brandName: '夜莺' }) })
   const queue = deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')
-  walk(client.render(liveDesk(client), queue))
+  walk(client.render(globalPanel(client), queue))
   client.runEffects()
-  await buttonByText(walk(client.render(liveDesk(client), queue)), '刷新').props.onClick()
-  assert.equal(liveDesk(client).opts.label, '夜莺')
+  await buttonByText(walk(client.render(globalPanel(client), queue)), '刷新').props.onClick()
+  assert.equal(liveSidebar(client).opts.label(), '夜莺')
   assert.equal(lastDraftValue(client), '夜莺', 'brandName 晚到：干净草稿跟随')
 })
 
 test('M1：localStorage.clear()（event.key === null）按删除覆盖处理', () => {
   const storage = memoryStorage({ [TAB_NAME_KEY]: '夜猫' })
   const client = loadClient({ localStorage: storage })
-  walk(client.render(liveDesk(client), deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')))
+  walk(client.render(globalPanel(client), deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')))
   client.runEffects()
-  assert.equal(liveDesk(client).opts.label, '夜猫')
+  assert.equal(liveSidebar(client).opts.label(), '夜猫')
   storage.map.clear()
   assert.equal(client.dispatchWindowEvent('storage', { key: null, newValue: null }), 1, 'clear 事件也要处理')
-  assert.equal(liveDesk(client).opts.label, '主理鱼', 'clear 之后回默认')
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', 'clear 之后回默认')
   assert.equal(lastDraftValue(client), '主理鱼', '干净草稿跟着回默认')
 })
 
 test('M1：无关 key 的 storage 事件仍然忽略', () => {
   const storage = memoryStorage()
   const client = loadClient({ localStorage: storage })
-  walk(client.render(liveDesk(client), deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')))
+  walk(client.render(globalPanel(client), deskQueue(brandSnapshot('主理鱼'), null, {}, 'settings')))
   client.runEffects()
   client.dispatchWindowEvent('storage', { key: 'dsh-session-superagent.other', newValue: '别的东西' })
-  assert.equal(liveDesk(client).opts.label, '主理鱼', '无关 key 不改页签')
+  assert.equal(liveSidebar(client).opts.label(), '主理鱼', '无关 key 不改页签')
   assert.equal(client.stateCalls().filter((call) => call.index === draftSlot()).length, 0, '也不动草稿')
 })
 
 test('B5：同仓库同会话的 issue 守与 PR 守并存时，点 PR 行只展开 PR 编辑器', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = {
     loading: false, error: null,
     body: {
@@ -6307,7 +6320,7 @@ test('B5：同仓库同会话的 issue 守与 PR 守并存时，点 PR 行只展
 
 test('B7：PR 守的表单不出现隔离执行 / 隔离工作目录，issue 守仍然有', () => {
   const { registrations, render } = loadClient()
-  const desk = registrations.find((r) => r.opts.id === 'session-superagent-desk')
+  const desk = registrations.find((r) => r.opts.name === 'main' && r.opts.key === 'session-superagent')
   const snapshot = (kind, id) => ({
     loading: false, error: null,
     body: {

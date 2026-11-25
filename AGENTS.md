@@ -24,6 +24,18 @@
 
 验收不能只看“能渲染”：真实可编辑/可点击、键盘路径、焦点归还、深浅主题和窄屏都要验。测试桩通过不等于真机交互通过。
 
+UI 模组采用**选择性官方强复刻**：只对齐会话级需要的 Ticket、执行、Outbox、草稿和健康视图，核对官方 DOM、CSS、computed style、图标与键盘交互；飞书、多人和团队角色不搬。每批产物至少两组独立双盲 Debug（核心黑盒 + 官方 UI 对照），审查员不得预先接收实现思路或已知问题。**UI 模组必须先由用户看图并确认交互，确认前不推送。**
+
+### 会话级导航与运行时（当前实验线）
+
+先读 [设计-会话级导航与运行时.md](./docs/设计-会话级导航与运行时.md)，其中固化了产品结论、目标、验收和踩坑。硬约束：
+
+- 项目会话即 Lead；独立 Runtime 不等于必须另建独立 Router。
+- 全局中枢放左侧插件页，当前项目工作台放会话右栏；旧中栏只在迁移期重定向，验收后移除。
+- `sessionId` 过滤和跨会话写保护必须在服务端执行，前端隐藏不算隔离。
+- 先收顶层组合根、事务和生命周期，再优化房间；不得用房间数量代替架构质量。
+- 评审/返工评论使用 `watch_pr_start`；`watch_ack` 后的 issue 守更新不等于持续跟踪。
+
 ---
 
 ## 一、先定位你在哪一步
@@ -32,9 +44,10 @@
 
 | 你在做什么 | 必读（按顺序） | 做完的判据 |
 |---|---|---|
-| **刚接手**，只知道有这么一个插件 | [README](./README.md) → [MAINTENANCE](./MAINTENANCE.md) | 能说清「11 个工具各干什么」「服务端改动要重启才生效」 |
+| **刚接手**，只知道有这么一个插件 | [README](./README.md) → [MAINTENANCE](./MAINTENANCE.md) | 能说清「12 个工具各干什么」「服务端改动要重启才生效」 |
 | **查现状 / 交接** | [MAINTENANCE](./MAINTENANCE.md) 的「二、当前状态」 | `git status` + `node --test` 复跑，数字与本文件对得上 |
 | **改轮询 / 唤醒 / 水位逻辑** | [docs/01-架构.md](./docs/01-架构.md) → `lib/watch.js` → [docs/回归清单.md](./docs/回归清单.md) | `node --test` 全绿 + **至少加一条反向用例** |
+| **改 Ticket / Thread / Executor / Outbox** | [设计-模块化房间.md](./docs/设计-模块化房间.md) → `lib/rooms/modular-runtime.js` → `lib/rooms/modular-outbox-host.js` | 20 房边界 PASS + worker/inline/ack/恢复测试通过 |
 | **改面板 / 弹层 / 状态栏 UI** | 本文件「〇、UI 硬约束」→ DSH 官方主库 → [docs/design-system.md](./docs/design-system.md) → [docs/面板文案.md](./docs/面板文案.md) | 原生结构/素材已复用 + `ui-audit` 100 分 + 深浅两套各一张图 + 文案快照已 `--write` |
 | **改用户可见文案** | [docs/面板文案.md](./docs/面板文案.md) + `docs/kb/` 同类条目 | `render-panel-copy.mjs` / `first-run.mjs` 快照同步，preflight 绿 |
 | **加文档 / 写知识库** | [docs/kb/README.md](./docs/kb/README.md) 的四段约定 | `check-docs` 四项 PASS（含**总数与板块合计一致**） |
@@ -131,7 +144,8 @@ node scripts/render-preview.mjs preview.html
 
 ## 十、当前基线
 
-1.0.0；全量 **1233/1233**、preflight **44 项**（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、UI **11/11**。
+2.0.0（独立实验仓候选）；全量 **1420/1420**、房间边界 **20/20**、preflight **44 项**（贡献归属仅 PR CI 执行，本地 / main push 为 SKIP）、UI **11/11**。
+无 `webServer` 的 headless 实例已完成 `watch_start`、重新 import/apply 与 interval 恢复验收；单守异常隔离及 `lastError` 落盘有独立测试。
 真实 Chromium：Issue #58 多段添加 / 编辑 / 删除 / 保存四项通过；Issue #60「只看新评论」新建、编辑保存与两次回读 **4/4** 通过。完整 harness 的 rc.2 Orbit/Modal 三项失败已由未改 main 复现（main 57/60，本分支含 #60 为 65/68），不记为本功能通过项。
 真实 `github` 工具 `POST /markdown` 请求体端到端验证通过（无仓库副作用）。
 未验：真实 DSH WebView 重载后的读屏 / 触摸 / IME、真实仓库内容写操作与 Gitee 写操作。没有实测不得写成通过。

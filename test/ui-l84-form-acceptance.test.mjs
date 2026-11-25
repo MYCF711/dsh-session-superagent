@@ -50,7 +50,7 @@ function hasClass(node, name) {
 }
 
 function deskOf(client) {
-  const desk = client.registrations.find((item) => item.opts.id === 'session-superagent-desk')
+  const desk = client.registrations.find((item) => item.opts.name === 'sidebar.right.pane.tab' && item.opts.key === 'dsh-session-superagent/session')
   assert.ok(desk, '找不到主面板 registration')
   return desk
 }
@@ -304,6 +304,7 @@ async function checkDirtyDiscard(kind) {
   const stateIndex = kind === 'add' ? 3 : 9
   // 编辑的 WatcherForm opening 来自 watcherValuesFrom（含 repo），放弃后 draft 也应恢复这整份快照。
   const opening = kind === 'edit' ? { ...current.queue[stateIndex], repo: 'a/b' } : { ...current.queue[stateIndex] }
+  if (kind === 'add') delete opening.createSessionId // 右栏新增绑定当前 session，不含全局页的目标会话字段
   const clean = current.render()
   assert.equal(saveBars(clean).length, 0, '干净 watcher 表单不能显示 SaveBar')
   const beforeGoal = fieldInput(clean, '目标/规则').props.value

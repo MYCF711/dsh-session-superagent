@@ -4,6 +4,40 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-23 —— 会话级导航与 session scope 隔离（实验候选）
+
+### Added
+
+- **左侧全局中枢 + 会话右栏工作台**：官方自动化任务与 Forge 使用独立 main、会话头部入口和右栏共享页面；我们用同一个 `SuperagentPage` 按 `global/session` scope 复用 watcher、Ticket、Outbox、草稿、确认与 Session 导航，避免复制三套状态。左侧全局页可选择真实目标会话新建 watcher；会话头部图标、Dock/Orbit 与开始页标准卡打开 `sessionSuperagent` 右栏，旧中栏注册已删除。
+- **服务端会话隔离**：`/state?sessionId` 真实过滤 watcher/Ticket/Outbox/事件/草稿，显式 `scope=global` 才返回全量目标与草稿；watch/Ticket/draft/Outbox 跨会话写入返回 403 且状态不变。会话 Outbox flush 不 recover 或触达其他会话，executor 全局暂停只允许全局入口。
+
+### Changed
+
+- **中栏不再承担主理鱼主页**：`conversation.view` 的旧注册和迁移组件已删除，品牌改名改为重注册左栏、右栏 definition 与标题；缺 `sidebarRight` 等宿主能力时显式降级并保留旧操作。当前全量 1420/1420、隔离 preflight 41 PASS + 3 SKIP、真实 Chromium 18/18；两组双盲均签收，用户已确认整版 UI；PR CI 是实验仓合入门。
+
+### Fixed
+
+- **Cordis 可选 Admission 服务不再要求隐式 inject**：重启后的真实 watcher 首轮因直接读取 `ctx.admissionGate` / `ctx.admissionAssessment` 抛出 `without inject`。改为安全 `ctx.get()`，保留普通对象宿主兼容；新增会抛错的 Context 代理与宿主服务仍生效两条回归。
+
+- **Windows 凭证 ACL 不再残留普通用户组权限**：安装 Debug 发现 `/grant:r` 只替换当前用户 ACE，显式的 Authenticated Users、BUILTIN Users 与 Everyone grant/deny 会残留。改用当前用户 SID 授权，并按固定组 SID 同时删除 grant/deny，避免本地化名称差异；新增真实 `icacls` 预置反向用例，修复后仅保留当前用户完全控制。
+
+- **双盲 UI 复核**：会话头部按 Forge 接入 `sidebarRight.view` 订阅、`aria-pressed` 与同 Session 同 kind `hide/toggle`，缺 `sidebarRightTabs.register` 不再显示假可用入口；官方 forwardRef Button + Tooltip 的 hover/pin/Escape 与键盘路径通过。700px 选中页签的中间帧问题改为等待真实主题动画结束，稳态继续使用官方 token，未新增颜色或提高基线。
+
+- **headless / 宿主重启后守不再轮询**：吸收 @iJetLi 在上游 #68 的启动修复，`apply()` 改用当前 `entry` 挂载，单条守异常不再阻断其余守；无 `webServer` 的实例也能恢复 interval。补充 `pollHealth()` 与 `boot-miss/stalled/grace/ok/never/paused` 判据，`watch_doctor` 区分启动挂载失败和运行中停滞；`/state`、`watch_status` 和面板只在异常时输出可选 `poll` 字段，健康态不占轮询体积。
+- **双盲审查修正健康语义与 UI 一致性**：正常 `nextAt` 退避、`deferReason`、活跃时段外不误报停摆；`enabled` 与调度器共用判据；新守按 `createdAt` 豁免首轮，超龄无首轮才报 boot-miss；optional 校验继续拒绝缺 stable 和未知字段。停摆守进入异常/问题筛选、Orbit 错误态与按仓库错误点，不再一面报停、一面显示主理中。
+- **单守启动异常仍不可见**：在上游 #68 基础上补 `persistEntry(entry)`，挂载失败的 `lastError` 必须真实写盘并可由 `readState`/doctor 读回。新增 12 条测试，覆盖健康判据、正常等待、headless 启动挂载、doctor 启动漏报、单守异常隔离与错误落盘、optional 校验和 UI 状态；独立实例完成真实 `watch_start`、重新 import/apply 和 interval 恢复。
+
+## [1.1.0] - 2026-11-22 —— 模块化房间与单用户执行（实验候选）
+
+### Added —— 模块化房间（独立实验仓）
+
+- 官方：组织级 Source/Policy/Ticket/Executor/Delivery 全套模型。我们：保留主理鱼 watcher 与水位 v2，只新增单人所需的 20 个最小房间；不做飞书、多人授权和团队多角色。为什么更好：保留已验证的 GitHub/Gitee/UI 能力，按房独立验收，不把单用户产品变成团队编排系统。
+- **Ticket 与 Thread**：`open/assigned/waiting/ended` 生命周期、执行历史、显式人类 resume、Thread 订阅和事件去重；ended 的非人事件不会直接复活执行体。
+- **inline / worker**：默认仍唤醒当前会话；`executionMode: "worker"` 通过 `sessionController` 与 `workspaceRegistry` 为每 Ticket 建持久 worker Session，缺宿主能力显式失败，不静默回退。
+- **持久化 Outbox**：同 Ticket FIFO、CAS 冲突重试、attempts 栅栏、失败退避、崩溃恢复；worker prompt 使用稳定 messageId，GitHub/Gitee 评论带不可见 marker 并在重试前查重。
+- **Admission / Source / 视图**：确定性 gate 先行、assessment 不得推翻拒绝；provider registry 接入真实 ack；Ticket records、执行、健康、Outbox、草稿与 zh/en 提示词接入 `/state` 和面板。
+- **模块化路由**：新增 `/tickets`、`/outbox`、`/draft`，总路由 16 条；写操作统一 `guardWrite` 与模块化 CAS，`/state` 区分未知 `null` 与显式空集合 `0`。
+
 ## [1.0.0] - 2026-11-21 —— 水位 v2 与最小交付房间
 
 ### Breaking

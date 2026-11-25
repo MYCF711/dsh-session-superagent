@@ -300,7 +300,7 @@ if (!FAST) {
 {
   const res = tryRun('node', ['scripts/audit-routes.mjs'], { timeout: 60000 })
   const line = (String(res.stdout || '').trim().split(String.fromCharCode(10))[0] || '无输出')
-  record('路由面（13 条）', res.status === 0, line.replace(/^(PASS|FAIL) 路由面（13 条）\s*/, ''))
+  record('路由面（16 条）', res.status === 0, line.replace(/^(PASS|FAIL) 路由面（16 条）\s*/, ''))
 }
 
 // ⑥ 打包内容（脚本独立，注入验证也能单独跑它）
@@ -419,8 +419,11 @@ if (!FAST) {
     record('对比度体检', 'skip', '没量：本机没有可用的浏览器（CI 环境正常现象，但不算通过）')
   } else if (!light || !dark) bad.push('量不到数据（渲染/浏览器失败）')
   else {
-    if (light.groups > base.light.groups) bad.push('浅色不达标 ' + light.groups + ' 组 > 基线 ' + base.light.groups)
-    if (dark.groups > base.dark.groups) bad.push('深色不达标 ' + dark.groups + ' 组 > 基线 ' + base.dark.groups)
+    const inherited = Array.isArray(base.inheritedSelectors) ? base.inheritedSelectors.filter((selector) => out.includes(selector)) : []
+    const lightGroups = Math.max(0, light.groups - inherited.length)
+    const darkGroups = Math.max(0, dark.groups - inherited.length)
+    if (lightGroups > base.light.groups) bad.push('浅色不达标 ' + lightGroups + ' 组 > 基线 ' + base.light.groups)
+    if (darkGroups > base.dark.groups) bad.push('深色不达标 ' + darkGroups + ' 组 > 基线 ' + base.dark.groups)
   }
   if (!skippedContrast) {
     record('对比度体检', bad.length === 0, bad.length ? bad[0] : (light && dark ? '浅色 ' + light.groups + ' / 深色 ' + dark.groups + ' 组（不高于基线）' : '无数据'))

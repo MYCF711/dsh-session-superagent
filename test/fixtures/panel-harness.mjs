@@ -22,6 +22,8 @@ export function loadClient(options = {}) {
   // window 级监听要能被用例触发（页签名称靠 'storage' 事件跟随其它页面）：
   // 以前 addEventListener 是空函数，注册了也永远收不到事件 —— 桩比运行时干净就会掩盖 bug。
   const windowListeners = new Map()
+  // Cordis 的 ctx.inject(deps, cb) 回调登记表（见下方 ctx.inject）
+  const deferredInjects = []
   const sandbox = {
     window: {
       __ModuleLoader__: { load(m) { mod = m } },
@@ -48,6 +50,7 @@ export function loadClient(options = {}) {
     // 页签名称的本地覆盖存在 localStorage 里（本浏览器 profile 范围）。沙箱默认**没有**它 ——
     // 等同于隐私模式/受限沙箱，用例要模拟「存得住」时显式传一个内存版实现。
     localStorage: options.localStorage,
+    sessionStorage: options.sessionStorage,
     setInterval: () => 0,
     clearInterval: () => {},
     // 审核 T38 第 5 条：沙箱里没有 setTimeout —— 点「保存凭证」实测
@@ -106,12 +109,25 @@ export function loadClient(options = {}) {
   // 本 render 里登记的 effect（runEffects() 才执行），每次 render 清空
   const effects = []
   const registrations = []
+  const defaultSessionCatalog = { phase: 'ready', byId: { s1: { title: '当前项目会话' }, 'session-a': { title: '会话 A' } } }
+  // 旧用例默认渲染共享主面板；中栏删除后给它真实的全局入口与目标会话目录。
+  // 传 services（包括显式传 {}）时仍严格使用调用方环境，用于缺失服务降级用例。
+  const services = options.services === undefined ? {
+    layout: { selectPanel() {} },
+    sidebarRight: { openTab() {} },
+    sidebarRightTabs: { register() { return () => {} } },
+    sessions: { list: { getSnapshot: () => defaultSessionCatalog }, refresh: async () => {} },
+  } : options.services
   // 槽位注册的「活着」集合：真宿主对 list 槽位「同 id + 同 priority」重复注册会抛错
   // （ui-conversation 的 viewTabs 靠它保证页签不重复）。桩以前返回空 disposer、从不检查，
   // 于是「改名忘了先 dispose」这种错在桩里全绿、到真机才炸。这里按宿主语义照做。
   const live = new Set()
   const ctx = {
     effect: (fn) => fn(),
+    // 真实宿主的可选服务入口；导航用例可显式覆盖 layout/sidebarRight/sessions。
+    get: (name) => services[name],
+    // 记录 Cordis 的动态注入回调：宿主服务比插件晚就绪时靠它重挂入口。
+    inject: (_deps, fn) => { deferredInjects.push(fn); if (!options.deferInject) fn() },
     slots: {
       inject: (_name, fn) => fn(),
       register(opts, Component) {
@@ -131,6 +147,7 @@ export function loadClient(options = {}) {
   }
   mod.factory((name) => {
     if (name === 'react') return React
+    if (name === '@deepseek-ai/dsh-client-ui-primitives' && options.primitives !== undefined) return options.primitives
     throw new Error('unexpected require: ' + name)
   }).apply(ctx)
 
@@ -164,7 +181,13 @@ export function loadClient(options = {}) {
   return {
     id: mod.id,
     registrations,
-    // 还活着的注册（dispose 过的会被剔掉）—— 「改名只重注册一条」要按它断言，
+    // 手动触发登记的 ctx.inject 回调，模拟「宿主服务晚于插件就绪」。
+    flushInjects: () => {
+      let called = 0
+      for (const fn of deferredInjects.splice(0)) { fn(); called += 1 }
+      return called
+    },
+    // 还活着的注册（dispose 过的会被剔掉）—— 左栏/右栏改名重注册要按它断言，
     // 按 registrations 长度断言会把「旧的一条已释放」误判成重复。
     liveRegistrations: () => registrations.filter((registration) => live.has(registration)),
     // 执行上一次 render 登记的 effect，返回清理函数数组（顺序与登记一致，由用例显式调用）
@@ -187,6 +210,7 @@ export function loadClient(options = {}) {
     windowListenerCount: (type) => (windowListeners.get(type) || new Set()).size,
     render,
     setViewport,
+    context: ctx,
     // 审核 T38：setter 以前是空函数，「点击 → 状态变化」零覆盖。
     // 现在 setter 会把调用记进这里，用例可以断言「点了这个按钮，状态真的变了」。
     stateCalls: () => hooks.stateCalls,
@@ -226,7 +250,7 @@ function walkInner(node, out) {
 
 
 /** 主理鱼面板的 useState 队列：snap / tab / notice / form / token / goalDraft / goalTouched / toast / editing / draft */
-export const deskForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: false, workdir: '' }
+export const deskForm = { repo: '', intervalSec: '60', goal: '', labels: '', onlyAssigned: false, onlyNewComments: false, activeHours: '', isolated: false, workdir: '', createSessionId: 's1' }
 export const deskQueue = (snapshot, editing = null, draft = {}, tab = 'overview', search = '', glossary = false, update = null, tabName = '主理鱼') =>
   // 末尾依次是：update / checking（0.8.38 版本检查）、settingsSection / reasonFilter / badgeFilter、
   // 以及 0.9.15 追加的 problemsOnly —— 顺序必须跟组件里的 useState 一致（测试桩按位置取值）

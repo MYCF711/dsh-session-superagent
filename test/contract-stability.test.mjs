@@ -37,6 +37,13 @@ const sameSet = (actual, expected) => {
   return a.length === b.length && a.every((item, index) => item === b[index])
 }
 
+// optional 只在特定状态出现；stable/experimental 仍必须实到，未知字段仍拒绝。
+const sameSetWithOptional = (actual, expected, manifest = {}) => {
+  const optional = new Set(Object.entries(manifest).filter(([, level]) => level === 'optional').map(([key]) => key))
+  const required = Object.keys(manifest).filter((key) => !optional.has(key))
+  return sameSet(actual, [...required, ...[...optional].filter((key) => actual.includes(key))])
+}
+
 test('结构化输出的每个字段都在稳定性清单里（新增字段必须登记）', async () => {
   const { tools, mod: mod0 } = await loadTools()
   const byName = (name) => tools.find((tool) => tool.name === name)
@@ -63,7 +70,7 @@ test('结构化输出的每个字段都在稳定性清单里（新增字段必�
   const ack = JSON.parse(await byName('watch_ack').execute({ repo: 'o/stab', number: 1, format: 'json' }))
 
   assert.ok(sameSet(Object.keys(status), Object.keys(manifest.watch_status.root)), 'watch_status 根字段变了：' + Object.keys(status).join(','))
-  assert.ok(sameSet(Object.keys(status.watchers[0]), Object.keys(manifest.watch_status.watcher)), 'watcher 字段变了：' + Object.keys(status.watchers[0]).join(','))
+  assert.ok(sameSetWithOptional(Object.keys(status.watchers[0]), Object.keys(manifest.watch_status.watcher), manifest.watch_status.watcher), 'watcher 字段变了：' + Object.keys(status.watchers[0]).join(','))
   assert.ok(sameSet(Object.keys(status.session), Object.keys(manifest.watch_status.session)), 'session 字段变了：' + Object.keys(status.session).join(','))
   assert.ok(sameSet(Object.keys(doctor), Object.keys(manifest.watch_doctor.root)), 'watch_doctor 根字段变了')
   assert.ok(sameSet(Object.keys(doctor.checks[0]), Object.keys(manifest.watch_doctor.check)), 'check 字段变了')
@@ -95,6 +102,14 @@ test('清单里不能有已经不存在的字段（避免清单自己腐烂）',
   const declared = Object.entries(manifest.watch_status.watcher).filter(([, level]) => level === 'stable').length
   assert.ok(declared > 0, '至少要有一个 stable 字段')
   for (const [, level] of Object.entries(manifest.watch_status.watcher)) {
-    assert.ok(level === 'stable' || level === 'experimental', '级别只能是 stable / experimental')
+    assert.ok(level === 'stable' || level === 'experimental' || level === 'optional', '级别只能是 stable / experimental / optional')
   }
+})
+
+test('optional 校验仍拒绝缺 stable 与未知字段，允许 optional 缺席或出现', () => {
+  const shape = { required: 'stable', future: 'experimental', poll: 'optional' }
+  assert.equal(sameSetWithOptional(['future'], Object.keys(shape), shape), false, '缺 stable 必须失败')
+  assert.equal(sameSetWithOptional(['required', 'future', 'unknown'], Object.keys(shape), shape), false, '未知字段必须失败')
+  assert.equal(sameSetWithOptional(['required', 'future'], Object.keys(shape), shape), true)
+  assert.equal(sameSetWithOptional(['required', 'future', 'poll'], Object.keys(shape), shape), true)
 })

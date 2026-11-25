@@ -49,6 +49,8 @@ for (const count of sizes) {
     // /state 的 filters 对默认 false 省略 onlyNewComments；watch_status 的 statusView 仍显式给布尔。
     // undefined 在 JSON.stringify 时省略，模拟的是实际 /state 体积，不是裁掉工具字段。
     ...(w.onlyNewComments === true ? {} : { onlyNewComments: undefined }),
+    // /state 只在显式 worker 时携带 executionMode；默认 inline 不占每守轮询流量。
+    ...(w.executionMode === 'worker' ? {} : { executionMode: undefined }),
     // 弹层「最近唤醒的是哪一条」：只有 /state 投影有（statusView 不带给工具），
     // 单条对象；不放进 fixture 就量不出它对请求体积的真实贡献
     // 维护者要求：夹具必须用代码允许的最坏输入 —— 全部守都带条目、标题取上限 60 码点，

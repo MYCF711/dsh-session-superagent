@@ -479,7 +479,8 @@ function measurePage(cfg) {
   // 同款的「未选中」控件：同标签 + 同 class 组合，且自身不在任何状态态、可见、有自己的文字。
   // 找不到就返回 null —— 「没找到对照」不等于「对照是 0」，宁可让 Node 侧不豁免。
   function restingTextOf(el, root) {
-    const classes = (el.getAttribute('class') || '').split(/\s+/).filter((name) => /^[A-Za-z0-9_-]+$/.test(name))
+    const classes = (el.getAttribute('class') || '').split(/\s+/)
+      .filter((name) => /^[A-Za-z0-9_-]+$/.test(name) && name !== 'active' && !/-active$/.test(name))
     if (!classes.length) return null
     const query = el.tagName.toLowerCase() + classes.map((name) => '.' + name).join('')
     let candidates = []
@@ -910,7 +911,7 @@ export function aggregate(themeKey, samples, thresholds = DEFAULT_THRESHOLDS) {
     const exemption = exemptionFor(sample, thresholds)
     const key = [
       sample.kind, sample.selector, sample.fg, sample.bg,
-      sample.fontSize + '/' + sample.fontWeight, exemption ? exemption.kind : '0', sample.control ? '1' : '0',
+      sample.kind === 'text' ? sample.fontSize + '/' + sample.fontWeight : '-', exemption ? exemption.kind : '0', sample.control ? '1' : '0',
     ].join('\u0001')
     let group = groups.get(key)
     if (!group) {
