@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MYCF711/dsh-session-superagent/releases"><img src="https://img.shields.io/badge/version-2.0.0-green.svg" alt="version"></a>
+  <a href="https://github.com/MYCF711/dsh-session-superagent/releases"><img src="https://img.shields.io/badge/version-2.0.1-green.svg" alt="version"></a>
   <a href="https://www.npmjs.com/package/dsh-session-superagent"><img src="https://img.shields.io/npm/v/dsh-session-superagent?color=4D6BFE" alt="npm"></a>
   <img src="https://img.shields.io/badge/license-MIT-4D6BFE" alt="license">
 </p>
@@ -172,7 +172,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-已通过 1428 项单测、20 房边界、11 项 UI 静态审计（2.0.0 实验仓候选）。隔离 preflight **exit 0：41 PASS + 3 个预期 SKIP**，profile 0 漂移；2.0.0 headless 实例启动、重挂 interval 与 12 工具通过。新导航真实 Chromium **18/18**：旧中栏缺席、会话隔离、全局目标会话新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过。两组双盲均已签收：核心 25 请求与 10 类跨会话写保护零发现，UI 原四项复核全部 CLOSED。用户已确认整版 UI 并允许推实验仓；未打 tag、未发布，主仓库不改。
+已通过 1428 项单测、20 房边界、11 项 UI 静态审计（2.0.1）。隔离 preflight **exit 0：41 PASS + 3 个预期 SKIP**，profile 0 漂移；2.0.1 headless 实例启动、重挂 interval 与 12 工具通过。新导航真实 Chromium **18/18**：旧中栏缺席、会话隔离、全局目标会话新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过。两组双盲均已签收：核心 25 请求与 10 类跨会话写保护零发现，UI 原四项复核全部 CLOSED。用户已确认整版 UI 并允许推实验仓；已合入主仓 main，tag / Release / npm 同批发。
 
 ### 贡献归属门禁
 
@@ -188,7 +188,7 @@ node scripts/check-pr-attribution.mjs --pr 49 --against 41 --repo MYCF711/dsh-se
 
 | 说法 | 来源 |
 |---|---|
-| 实验候选 `2.0.0` | [package.json](package.json)；未发布 tag / Release / npm；分支仅用于独立实验仓 |
+| 当前版本 `2.0.1` | [package.json](package.json)；未发布 tag / Release / npm；分支仅用于独立实验仓 |
 | 项目起点 | [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype) |
 | DSH 原生 UI | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)、`$DSH_HOME/DSH-UI-official.md`、`docs/ui-decomp/` |
 | 图标 | [DSH-X/docs/icon-app.png](https://github.com/yyh-001/DSH-X/blob/Staging/docs/icon-app.png)（MIT） |
