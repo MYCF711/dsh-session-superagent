@@ -6,7 +6,7 @@
 
 ### Fixed
 
-- **点头部鲸鱼图标报 `sidebarRight: no tab type is registered as "sessionSuperagent"`**（2026-11-26 真机）。官方：宿主 `sidebarRight` / `sidebarRightTabs` 晚于插件 `apply` 就绪，`openTab(kind)` 只认宿主注册表里 inForce 的 definition。我们：2.0.0 的「服务晚就绪重挂」只补挂了会话头部，右栏 definition 与 `sidebar.right.pane.tab` / `.title` 仍只在 `apply` 的 `ctx.effect` 里注册一次 —— 服务晚到的实例上它们从未注册，而头部已按新服务启用，点下去就由宿主抛错。为什么以前没发现：单测夹具的 `openTab` 不校验 kind，桩比宿主干净。
+- **点头部鲸鱼图标报 `sidebarRight: no tab type is registered as "sessionSuperagent"`**（2026-11-26 真机）。官方：宿主 `sidebarRight` / `sidebarRightTabs` 晚于插件 `apply` 就绪，`openTab(kind)` 只认宿主注册表里 inForce 的 definition。我们：2.0.0 的「服务晚就绪重挂」只补挂了会话头部，右栏 definition 与 `sidebar.right.pane.tab` / `.title` 仍只在 `apply` 的 `ctx.effect` 里注册一次 —— 服务晚到的实例上它们从未注册，而头部已按新服务启用，点下去就由宿主抛错。为什么以前没发现：单测夹具的 `openTab` 不校验 kind，桩比宿主干净。（@iJetLi，PR #71）
   修复分两层，审计（实现审计 + 对抗审计）各发现一半，均已修：
   1. **入口与注册一起补**：definition / body / title 改为可重入 mount，在 Cordis `ctx.inject` 回调里**先补注册、再重挂头部**；左栏 `main` / `sidebar.panellist` 同样改为可重入（`layout` 晚到的实例上它们以前也永久缺失）。
   2. **不再被无关服务绑死**：注入依赖按入口拆开 —— 右栏 definition 只依赖 `sidebarRightTabs`、头部只依赖 `sidebarRight`、全局页只依赖 `layout`；2.0.0 把三者与 `sessions` 绑在同一个 inject 上，`sessions` 缺失或晚到时右栏会永久不可用。
