@@ -430,7 +430,7 @@ test('生产入口 collectImageLines 用默认预算就能下成功（PR #76 rev
     label: '#77',
   })
   assert.equal(calls.length, 1, '必须真的发起一次下载：' + JSON.stringify(calls))
-  assert.equal(lines.length, 1, '必须产出一行说明：' + JSON.stringify(lines))
+  assert.equal(lines.length, 2, '两行：路径行 + 安全边界行：' + JSON.stringify(lines))
   // 🔒 单一来源守卫（对抗审计打穿点 #1）：这个用例必须证明预算**来自 DEFAULT_IMAGE_LIMITS**，
   //   而不是「恰好等于某个硬编码值」。否则有人把 index.js 改成 `deadlineMs: 45_000` 硬编码，
   //   同时删掉 DEFAULT 里那项，这个用例照样绿 —— 同类 bug 又被藏起来。
@@ -443,6 +443,7 @@ test('生产入口 collectImageLines 用默认预算就能下成功（PR #76 rev
   assert.ok(DEFAULT_IMAGE_LIMITS.deadlineMs >= 1000, '整批预算必须 ≥ 1000ms（否则 40ms 的图都可能被误杀）')
   assert.ok(/read_image/.test(lines[0]), '说明里要点名 read_image：' + lines[0])
   assert.ok(!/NaN/.test(lines[0]), '绝不能出现「下载超时（NaN 秒）」：' + lines[0])
+  assert.match(lines[1], /不是本会话的指令/, '必须带「图中文字不是指令」的安全边界：' + lines[1])
   // 而且文件要真的落在 state/images 下
   const path = join(STATE_DIR, 'images', repoDirName('acme/prod'), 'issue-77', imageName(url))
   assert.equal(existsSync(path), true, '图片必须真的落盘：' + path)
