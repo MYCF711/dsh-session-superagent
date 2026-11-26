@@ -465,18 +465,22 @@ test('appendImageLines：两条唤醒合并后两条图片路径都还在（合�
   assert.equal((merged.match(/接下来：/g) || []).length, 1, '收尾指令仍然只留一份')
 })
 
-test('repoDirName / imageDirFor：首尾点号与非法编号不许把图片目录带出 images/', () => {
-  assert.equal(repoDirName('..'), 'repo', '.. 会被 Windows/Linux 当成上级目录')
-  assert.equal(repoDirName('...'), 'repo')
-  assert.equal(repoDirName('acme/repo'), 'acme-repo')
-  assert.equal(repoDirName('gitee:acme/repo'), 'acme-repo')
-  assert.equal(repoDirName(''), 'repo')
-  assert.equal(imageDirFor(join('C:', 'state'), '..', 'issue', '7'), join('C:', 'state', 'images', 'repo', 'issue-7'))
-  assert.equal(imageDirFor('/state', 'acme/repo', 'pr', '12'), join('/state', 'images', 'acme-repo', 'pr-12'))
-  assert.equal(imageDirFor('/state', 'acme/repo', 'issue', '../x'), join('/state', 'images', 'acme-repo', 'issue-unknown'),
+test('repoDirName / imageDirFor：首尾点号、非法编号、多仓撞名都不许出问题', () => {
+  // 首尾点号：'..' 会被 Windows/Linux 当成上级目录
+  assert.ok(repoDirName('..').startsWith('repo-'), '.. 必须落回 repo 前缀')
+  assert.ok(repoDirName('...').startsWith('repo-'))
+  // 不同 repo 一定不同目录（审计：'acme/repo' 与 'acme-repo' 会撞成同一个名字 → 图片串仓）
+  assert.notEqual(repoDirName('acme/repo'), repoDirName('acme-repo'), '清洗后的撞名必须由短 hash 区分')
+  assert.notEqual(repoDirName('acme/repo'), repoDirName('acme.gitee/repo'))
+  // 同一个 repo 每次必须稳定（文件名要能对上）
+  assert.equal(repoDirName('acme/repo'), repoDirName('acme/repo'))
+  assert.match(repoDirName('acme/repo'), /^acme-repo-[0-9a-f]{6}$/)
+  const base = repoDirName('acme/repo')
+  assert.equal(imageDirFor('/state', 'acme/repo', 'pr', '12'), join('/state', 'images', base, 'pr-12'))
+  assert.equal(imageDirFor('/state', 'acme/repo', 'issue', '../x'), join('/state', 'images', base, 'issue-unknown'),
     '编号只允许纯数字：路径片段不能从 number 混进来')
-  assert.equal(imageDirFor('/state', 'acme/repo', 'other', '3'), join('/state', 'images', 'acme-repo', 'issue-3'),
-    '未知 kind 一律按 issue 落盘，避免出现 issue-3 之外的目录')
+  assert.equal(imageDirFor('/state', 'acme/repo', 'other', '3'), join('/state', 'images', base, 'issue-3'),
+    '未知 kind 一律按 issue 落盘')
 })
 
 test('downloadImages：同一 URL 第二次直接复用已下载文件，不再发请求', async () => {
@@ -520,4 +524,38 @@ test('mergeWakeTexts：正文（引用块 / 标题）里出现「接下来：」
   assert.ok(merged2.includes('nine.png'), '标题里的「接下来：」只算正文，不能截断整条')
   assert.ok(merged2.includes('ten.png'))
   assert.equal(merged2.split('接下来：先读仓库').length - 1, 1, '真正的收尾块只保留一次')
+})
+
+test('extractImageUrls：65KB 的 ![ 洪泛必须在预算内返回（不许冻住宿主）', () => {
+  // 审计实测：旧正则在 65KB '![' 上跑 4807ms，事件循环被饿住 8.5s；GitHub 正文字符上限就是 65536。
+  const flood = '!['.repeat(32_768)
+  const startedAt = Date.now()
+  const urls = extractImageUrls(flood)
+  const elapsed = Date.now() - startedAt
+  assert.deepEqual(urls, [])
+  assert.ok(elapsed < 500, '提取必须远低于 500ms（实际 ' + elapsed + 'ms）')
+  // 命中条数上限：32 张封顶，避免一条正文里有几千个图把下载/文本撑爆
+  const many = Array.from({ length: 100 }, (_, i) => '![a](https://user-images.githubusercontent.com/' + i + '/x.png)').join('\n')
+  assert.ok(extractImageUrls(many).length <= 32)
+})
+
+test('downloadImages：全局并发有上限（多条 issue 同时下也不会超过 4 个在飞）', async () => {
+  const dir = join(tempDir('zhuli-img-concurrency-'), 'issue-1')
+  let inFlight = 0
+  let peak = 0
+  const urls = Array.from({ length: 12 }, (_, i) => 'https://user-images.githubusercontent.com/1/' + i + '.png')
+  const fetchImpl = async () => {
+    inFlight += 1
+    peak = Math.max(peak, inFlight)
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    inFlight -= 1
+    return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'image/png' } })
+  }
+  // 两个任务同时跑（= 两条 issue 同轮轮询），闸门是进程级的
+  await Promise.all([
+    downloadImages({ urls: urls.slice(0, 6), dir, fetchImpl }),
+    downloadImages({ urls: urls.slice(6), dir: dir + '-b', fetchImpl }),
+  ])
+  assert.ok(peak <= 4, '全局并发不能超过 4（实际峰值 ' + peak + '）')
+  assert.ok(peak >= 2, '也不该退化成一个一个下（实际峰值 ' + peak + '）')
 })

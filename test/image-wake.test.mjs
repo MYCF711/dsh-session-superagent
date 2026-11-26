@@ -13,6 +13,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { repoDirName } from '../lib/images.js'
 import { tempDir, assertTempStateDir } from './fixtures/tmpdir.mjs'
 
 const STATE_DIR = tempDir('zhuli-image-wake-')
@@ -50,6 +51,8 @@ function fakeFetch(handler) {
   impl.calls = calls
   return impl
 }
+
+const REPO_DIR = repoDirName('acme/repo')
 
 const headerOf = (call, name) => {
   for (const [key, value] of Object.entries((call && call.init && call.init.headers) || {})) {
@@ -136,7 +139,7 @@ test('issue 正文里的图会存成本地文件，唤醒文本给出 read_image
 
   assert.equal(sent.length, 1, '必须真的发出去一次')
   const text = sent[0].text
-  const dir = join(STATE_DIR, 'images', 'acme-repo', 'issue-7')
+  const dir = join(STATE_DIR, 'images', REPO_DIR, 'issue-7')
   const path = join(dir, imageName(url))
   assert.ok(text.includes(path), '唤醒文本要给绝对路径：' + path + '\n---\n' + text)
   assert.match(text, /【图片】#7 有 1 张图已存本地，用 read_image 读取：/)
@@ -157,7 +160,8 @@ test('issue 正文只有非白名单图片：唤醒照发，只说下载失败�
   const text = sent[0].text
   assert.match(text, /【图片】#11 的 1 张图下载失败：不在 GitHub 图片白名单/)
   assert.doesNotMatch(text, /read_image/, '没有存下任何文件就不能叫模型去读')
-  assert.doesNotMatch(text, /images[\\/]acme-repo/, '失败的图不许出现不存在的路径')
+  assert.ok(!text.includes(REPO_DIR) && !text.includes('images' + String.fromCharCode(92) + 'acme'),
+    '失败的图不许出现不存在的目录（目录名是 ' + REPO_DIR + '）')
   assert.equal(fetchImpl.calls.length, 0, '白名单外连请求都不该发（防 SSRF）')
   await settled(() => entry.lastWake !== undefined && entry.lastWake !== null, '这一轮要算真的唤醒过')
 })
@@ -211,7 +215,7 @@ test('github 附件：首跳带 Bearer，302 之后第二跳去掉 Authorization
   assert.equal(fetchImpl.calls.length, 2, '必须跟到第二跳')
   assert.equal(headerOf(fetchImpl.calls[0], 'authorization'), 'Bearer ghs_panel_token')
   assert.equal(headerOf(fetchImpl.calls[1], 'authorization'), undefined, 'S3 那一跳不许带 Authorization')
-  const path = join(STATE_DIR, 'images', 'acme-repo', 'issue-14', imageName(url))
+  const path = join(STATE_DIR, 'images', REPO_DIR, 'issue-14', imageName(url))
   assert.ok(sent[0].text.includes(path), '第二跳存下来的图也要出现在文本里')
   assert.equal(existsSync(path), true)
   // 凭证绝不出现在唤醒文本里（唤醒文本还会过 redact()，但不能靠它兜底）
@@ -309,7 +313,7 @@ test('PR 新评论里的图存到 pr-<number> 目录，图片行追加在唤醒�
 
   assert.equal(sent.length, 1)
   const text = sent[0].text
-  const path = join(STATE_DIR, 'images', 'o-r', 'pr-7', imageName(url))
+  const path = join(STATE_DIR, 'images', repoDirName('o/r'), 'pr-7', imageName(url))
   assert.ok(text.includes(path), 'PR 也要给绝对路径：' + text)
   assert.match(text, /【图片】#7 评论 有 1 张图已存本地，用 read_image 读取：/)
   // 末尾追加：图片段是文本最后一段（处理建议仍在它前面）
@@ -364,10 +368,24 @@ test('issue 评论里的图（只出现在 lastComment.images）也会存盘并�
 
   assert.equal(sent.length, 1)
   const text = sent[0].text
-  const path = join(STATE_DIR, 'images', 'acme-repo', 'issue-21', imageName(url))
+  const path = join(STATE_DIR, 'images', REPO_DIR, 'issue-21', imageName(url))
   assert.ok(text.includes(path), '评论里的图也要给绝对路径：' + path + '\n---\n' + text)
   assert.equal(existsSync(path), true, '评论图必须真的落盘')
   assert.deepEqual(fetchImpl.calls.map((call) => call.url), [url, landed], '先附件入口、再 302 落点')
   // 第二跳（S3 预签名）绝不能带 Authorization：带了就是 403 / 空 body
   assert.equal(headerOf(fetchImpl.calls[1], 'authorization'), undefined)
+})
+
+test('离线模式下不进网络，但要在唤醒文本里说明「离线没下」（不许静默）', async () => {
+  // 这个文件的 DSH_SUPERAGENT_OFFLINE=1；不注入 fetch 时 collectImageLines 走离线分支。
+  const url = 'https://user-images.githubusercontent.com/1/offline.png'
+  const sent = []
+  const entry = persist(makeEntry({ id: 'acme/repo#offline', seen: {} }))
+  const fetchImpl = undefined
+  await __test.pollWithItems(ctxOf({ status: 'idle' }), entry, 60000, parsed([
+    issue(31, { body: '![图](' + url + ')' }),
+  ]), null, { wake: captureWake(sent) })
+  assert.equal(sent.length, 1)
+  assert.match(sent[0].text, /离线模式，没有下载/, '离线跳过必须写出来，否则客户以为是功能坏了：' + sent[0].text)
+  assert.ok(!sent[0].text.includes(imageName(url)))
 })
