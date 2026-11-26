@@ -160,7 +160,7 @@ test('REST 兜底取最后评论：参数形状严格锁死（per_page=100 + --p
     'repos/owner/repo/issues/89/comments?per_page=100',
     '--paginate',
     '--jq',
-    '.[-1] | {login: .user.login, at: .created_at}',
+    '.[-1] | {login: .user.login, at: .created_at, body: .body}',
   ])
   // 查询串只允许 per_page 一个参数，且值必须是 100（接口上限）
   const search = mod.lastCommentArgs('owner/repo', 89)[1].split('?')[1] || ''
@@ -189,7 +189,7 @@ test('REST 兜底取最后评论：多页 stdout 取最后一条有效记录（�
   const page1 = '{"login":"first","at":"2026-11-09T02:19:11Z"}'
   const page2 = '{"login":"middle","at":"2026-11-09T03:00:00Z"}'
   const page3 = '{"login":"last","at":"2026-11-09T04:30:44Z"}'
-  const last = { login: 'last', at: '2026-11-09T04:30:44Z' }
+  const last = { login: 'last', at: '2026-11-09T04:30:44Z', images: [] }
   // 三页（LF）：第 3 页的最后一条才是全线程最后一条
   assert.deepEqual(mod.parseLastComment([page1, page2, page3].join('\n')), last)
   // Windows / 真机 gh 可能吐 CRLF；行尾差异不能改变结果
@@ -201,7 +201,22 @@ test('REST 兜底取最后评论：多页 stdout 取最后一条有效记录（�
   // 单页只有一行：原样返回
   assert.deepEqual(mod.parseLastComment(page3 + '\n'), last)
   // 缺 at：login 仍然可用，at 补空串（消息里只显示人）
-  assert.deepEqual(mod.parseLastComment('{"login":"helper"}'), { login: 'helper', at: '' })
+  assert.deepEqual(mod.parseLastComment('{"login":"helper"}'), { login: 'helper', at: '', images: [] })
+})
+
+test('REST 兜底取最后评论：评论正文里的图片 URL 必须带出来（issue 评论图的唯一来源）', async () => {
+  const mod = await import('../lib/gh-format.js')
+  const body = '复现步骤：\n<img width="1114" src="https://github.com/user-attachments/assets/4c5a7c7f-fe2b-4879-bd77-4f01b55e3de6" />\n'
+    + '再补一张 ![shot](https://private-user-images.githubusercontent.com/123/a.png?jwt=x)'
+  const line = JSON.stringify({ login: 'reporter', at: '2026-11-26T10:00:00Z', body })
+  const parsed = mod.parseLastComment(line + '\n')
+  assert.equal(parsed.login, 'reporter')
+  assert.deepEqual(parsed.images, [
+    'https://github.com/user-attachments/assets/4c5a7c7f-fe2b-4879-bd77-4f01b55e3de6',
+    'https://private-user-images.githubusercontent.com/123/a.png?jwt=x',
+  ], 'HTML img 与 markdown 两种写法都要提取，且保持出现顺序')
+  // 没有 body 时必须是空数组而不是 undefined：调用方不该写 ?? [] 兜底
+  assert.deepEqual(mod.parseLastComment(JSON.stringify({ login: 'x', at: 't' })).images, [])
 })
 
 test('REST 兜底取最后评论：空 / 坏 JSON / login 为空一律 null（不抛、不阻断唤醒）', async () => {

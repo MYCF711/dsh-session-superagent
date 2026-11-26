@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **issue / PR 里的图片现在能被「看见」**（真机：issue 只贴截图时，处理会话只能回「拿不到图片内容」）。官方事实：DSH 宿主内置 `read_image` 工具（参数 `file_path`），它读本地 PNG/JPEG/WebP/GIF、把**图片本身**返回给模型，大图自动缩放；代价是它要求调用路由声明了图片输入、要挂 attachments 服务，且**文件扩展名必须和字节一致**（否则报 IMAGE_TYPE_MISMATCH）。我们怎么做：服务端在唤醒前把正文里的图下到本地 `<state>/images/<owner-repo>/<issue|pr>-<number>/<url 的 sha256 前 12 位>.<真实格式>`，唤醒文本里追加一行「`【图片】#12 有 2 张图已存本地，用 read_image 读取：<绝对路径> …`」（插在收尾的「接下来：」之前 —— 多条唤醒合并时那一段只保留第一条，放尾巴里会让后面几条的路径静默消失）。为什么不把链接直接给模型：唤醒是纯文本、模型拿 URL 也没有下载凭证，而让模型自己抓就等于把 token 和「能访问哪些域名」交给它；下载放在服务端才能守住白名单。边界（刻意的）：只下 https 且只认 GitHub 图片域（`github.com` 附件入口、`*.githubusercontent.com`、`github-production-user-asset-*.s3.amazonaws.com`），其它域名连请求都不发（防 SSRF，`302` 的目标也要过白名单）；每条 issue / PR 最多 6 张、单张 10 MiB、10 秒超时（AbortController）；单张失败只降级为唤醒文本里的一句原因，绝不阻断唤醒；`github.com/user-attachments/assets/*` 首跳带 `Authorization: Bearer` + `Accept: application/octet-stream`，**跟到 S3 预签名 URL 时必须去掉 Authorization**（否则 403 / 空 body），`private-user-images` / `camo` 则直接 GET 不带凭证。v1 未覆盖：Gitee 附件（域名不在白名单）与 PR 正文图片（GraphQL 现有查询没带 PR body，不为它重写整条查询）。规则全在 `lib/images.js`（纯逻辑 + 注入 fetch），新增 24 条离线单测 + 7 条唤醒集成用例。审计后加固：issue **评论**里的图也会下载（`parseLastComment` 提取 `images`；正文纯文字、截图在评论里的 issue 也读得到）；合并唤醒的尾巴判定改成**行首**「接下来：」（旧实现按 `indexOf`，正文或标题里出现这四个字就会截掉后面几条的图片路径）；传输层定稿为 Node 内置 https + `tls.getCACertificates('system')` 系统信任库（本机 MITM 下 fetch / curl 都 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`），并用本地 socket 补 4 条真实 I/O 测试（延迟读不丢字节、无 content-length 的流式超限、`discard` 后连接复用、预中止）；另有界并发 4、单张 20 秒、同一 URL 命中已有文件直接复用、不读 body 的响应统一 `discard`（防 socket 泄漏）、路径用反引号包裹（含空格也能切出单个 `file_path`）、仓库目录与编号做路径校验。边界补充：私有仓库附件需要插件 secrets 里配置 GitHub token（不读 gh 的 keyring；没配置时公开图仍可下、私有图降级为「下载失败：HTTP 401/404」）；离线模式不下图。
+
 ### Fixed
 
 - **点头部鲸鱼图标报 `sidebarRight: no tab type is registered as "sessionSuperagent"`**（2026-11-26 真机）。官方：宿主 `sidebarRight` / `sidebarRightTabs` 晚于插件 `apply` 就绪，`openTab(kind)` 只认宿主注册表里 inForce 的 definition。我们：2.0.0 的「服务晚就绪重挂」只补挂了会话头部，右栏 definition 与 `sidebar.right.pane.tab` / `.title` 仍只在 `apply` 的 `ctx.effect` 里注册一次 —— 服务晚到的实例上它们从未注册，而头部已按新服务启用，点下去就由宿主抛错。为什么以前没发现：单测夹具的 `openTab` 不校验 kind，桩比宿主干净。（@iJetLi，PR #71）
