@@ -15,6 +15,7 @@ import test from 'node:test'
 import { tempDir } from './fixtures/tmpdir.mjs'
 import {
   DEFAULT_IMAGE_LIMITS,
+  __test as imagesTest,
   appendImageLines,
   downloadImages,
   extractImageUrls,
@@ -558,4 +559,91 @@ test('downloadImages：全局并发有上限（多条 issue 同时下也不会�
   ])
   assert.ok(peak <= 4, '全局并发不能超过 4（实际峰值 ' + peak + '）')
   assert.ok(peak >= 2, '也不该退化成一个一个下（实际峰值 ' + peak + '）')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 默认预算参数（PR #76 review：生产路径每张图都「下载超时（NaN 秒）」）
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 之前的漏洞形状：`DEFAULT_IMAGE_LIMITS` 漏了 `deadlineMs`，而 `lib/index.js` 一直按
+// 这个名字取 → `deadlineMs: undefined` → `budgetAt = Date.now() + undefined = NaN`
+// → `setTimeout(NaN)` 被 Node 压成 1ms → 生产路径**每张图都失败**。
+// 而上面所有用例都是直接调 downloadImages 并（隐式或显式）手传预算，
+// 压根没人检查「默认值本身完不完整」，于是全绿也发现不了。
+test('DEFAULT_IMAGE_LIMITS 必须齐全：index.js 依赖的每个字段都在，且都是正整数', () => {
+  // 这几个名字是 lib/index.js 实际读取的，少一个就是 undefined
+  for (const name of ['maxCount', 'maxBytes', 'timeoutMs', 'deadlineMs']) {
+    const value = DEFAULT_IMAGE_LIMITS[name]
+    assert.equal(Number.isFinite(value) && value > 0, true, 'DEFAULT_IMAGE_LIMITS.' + name + ' 必须是正整数，实际：' + JSON.stringify(value))
+  }
+  // deadlineMs 曾经就是漏的那一个，单独钉死（防止以后又被删掉）
+  assert.equal(DEFAULT_IMAGE_LIMITS.deadlineMs, 45_000, 'deadlineMs 必须存在且是 45 秒（index.js 的整批预算）')
+})
+
+test('downloadImages：只传默认参数（不手传 deadlineMs）也能下成功，预算不能是 NaN', async () => {
+  // 这是 reviewer 的复现路径：完全走 index.js 那组参数
+  const dir = tempDir('zhuli-img-default-')
+  const url = 'https://user-images.githubusercontent.com/1/default.png'
+  const fetchImpl = fakeFetch(() => pngResponse())
+  const result = await downloadImages({
+    urls: [url],
+    dir,
+    fetchImpl,
+    maxCount: DEFAULT_IMAGE_LIMITS.maxCount,
+    deadlineMs: DEFAULT_IMAGE_LIMITS.deadlineMs,
+  })
+  assert.deepEqual(result.failures, [], '默认预算下不该有任何失败（以前是「下载超时（NaN 秒）」）')
+  assert.equal(result.files.length, 1)
+  assert.equal(result.files[0].bytes, PNG_BYTES.length)
+})
+
+test('预算参数算不出来就抛 TypeError，不静默降级成 1ms（防同类回归）', async () => {
+  const dir = tempDir('zhuli-img-nan-')
+  const url = 'https://user-images.githubusercontent.com/1/nan.png'
+  const fetchImpl = fakeFetch(() => pngResponse())
+  // ① 兜底也缺失 → 必须抛（reviewer 那次的形状：DEFAULT 漏了 deadlineMs）
+  assert.throws(
+    () => imagesTest.budgetInt(undefined, undefined, 'deadlineMs'),
+    (error) => error instanceof TypeError && /预算参数缺失或非法/.test(error.message),
+    '兜底为 undefined 时必须抛 TypeError，不能让 NaN 传进 setTimeout',
+  )
+  // ② 传了值但非法、兜底也没有 → 同样抛
+  assert.throws(() => imagesTest.budgetInt(NaN, undefined, 'timeoutMs'), TypeError)
+  // ③ 对照：兜底有效 → 用兜底，不抛（这才是生产的正常路径）
+  assert.equal(imagesTest.budgetInt(undefined, 45_000, 'deadlineMs'), 45_000)
+  // ④ 集成路径：显式传非法值但默认值有效 → 回落到默认，正常下成功
+  const res = await downloadImages({ urls: [url], dir, fetchImpl, deadlineMs: -1 })
+  assert.equal(res.files.length, 1, '非法值应回落到有效默认值，而不是抛或 NaN')
+  // ⑤ 显式给合法预算也正常
+  const ok = await downloadImages({ urls: [url], dir, fetchImpl, deadlineMs: 5_000 })
+  assert.equal(ok.files.length, 1)
+})
+
+test('imageNoteLines：maxInText 显式 0 / 非法 回落默认，不会「一张都不列」（审计 L1）', () => {
+  const files = Array.from({ length: 10 }, (_, i) => ({ path: '/tmp/p' + i + '.png' }))
+  for (const value of [0, -1, NaN, undefined, 'abc']) {
+    const lines = imageNoteLines({ label: '#1', files, failures: [], maxInText: value })
+    const paths = (lines[0] || '').match(/\.png/g) || []
+    assert.equal(paths.length, 6, 'maxInText=' + String(value) + ' 必须回落默认 6（不是 0 张）：' + String(lines))
+  }
+  // 显式正数仍然生效
+  const three = imageNoteLines({ label: '#1', files, failures: [], maxInText: 3 })
+  assert.equal((three[0].match(/\.png/g) || []).length, 3, '显式 maxInText=3 必须只列 3 张')
+})
+
+test('超时原因不足 1 秒时写成「不足 1 秒」，不是「0 秒」（审计 L2）', async () => {
+  const dir = tempDir('zhuli-img-secs-')
+  const url = 'https://user-images.githubusercontent.com/1/slow.png'
+  // 桩 40ms 才回；deadlineMs=1 → 剩余预算 <500ms，旧措辞会写成「下载超时（0 秒）」
+  const fetchImpl = (target, init = {}) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(pngResponse()), 40)
+    const signal = init && init.signal
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })) }, { once: true })
+  })
+  const result = await downloadImages({ urls: [url], dir, fetchImpl, deadlineMs: 1 })
+  assert.equal(result.files.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(/超时/.test(result.failures[0].reason), result.failures[0].reason)
+  assert.equal(/0 秒/.test(result.failures[0].reason), false, '不足 1 秒不能写成「0 秒」：' + result.failures[0].reason)
+  assert.ok(/不足 1 秒/.test(result.failures[0].reason), '应写「不足 1 秒」：' + result.failures[0].reason)
 })
