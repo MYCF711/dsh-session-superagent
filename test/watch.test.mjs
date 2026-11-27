@@ -735,7 +735,8 @@ test('GraphQL 批量：一次查多条，单条 NOT_FOUND 不影响其他条', (
     errors: [{ type: 'NOT_FOUND', path: ['repository', 'i1'] }],
   }
   const parsed = parseCommentBatch(payload)
-  assert.deepEqual(parsed['7'], { login: 'helper', at: '2026-11-02T07:00:00Z', linked: [] }, '没关联 PR 时给空数组')
+  assert.deepEqual(parsed['7'], { login: 'helper', at: '2026-11-02T07:00:00Z', images: [], linked: [] },
+    '没关联 PR 时给空数组；评论正文没有图时 images 是空数组')
   assert.equal(parsed['9'], undefined, '没有评论就不放进来')
   assert.equal(parseCommentBatch(null) && Object.keys(parseCommentBatch(null)).length, 0)
 })

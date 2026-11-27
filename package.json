@@ -63,6 +63,7 @@
     "lib/pr-watch.js",
     "lib/redact.js",
     "lib/body.js",
+    "lib/images.js",
     "lib/gitee.js",
     "lib/gates.js",
     "lib/state-migration.js",
