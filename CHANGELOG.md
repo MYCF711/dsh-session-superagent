@@ -21,6 +21,8 @@
 
 ### Fixed
 
+- **DSH 绑定非回环 IPv4 时，面板写请求不再误报 `cross-origin request refused`**。写入门禁按宿主监听的协议、主机和端口校验请求目标与浏览器来源；保留同源回环和无来源 CLI 的兼容性，跨站请求仍返回 403。不改客户端，也不信任代理转发头。
+
 - **图片功能在生产路径上每张都失败（`下载超时（NaN 秒）`）**（PR #76 review 独立复核发现）。`DEFAULT_IMAGE_LIMITS` 漏了 `deadlineMs`，而 `lib/index.js` 一直按这个名字取：`deadlineMs: undefined` → `budgetAt = Date.now() + undefined = NaN` → `Math.min(timeoutMs, Math.max(1000, NaN))` 也是 `NaN` → `setTimeout(NaN)` 被 Node 压成 **1ms** → 每张图都超时。为什么单测全绿也发现不了：它们都直接调 `downloadImages` 并手传预算，**没有任何一条走 `lib/index.js` 那组参数**。修：① 补 `deadlineMs: 45_000`；② 预算参数解析拆成 `budgetInt`（缺失/非法直接抛 `TypeError`，不许把 `undefined` 静默传给 `setTimeout`）与 `countInt`（`content-length` 这类可缺失的用宽松兜底）；③ `collectImageLines` 的 catch 不再一律静默 `return []`：`TypeError`（编程错误，预算缺字段就走这条）改为**响亮降级**写进唤醒文本「图片处理内部错误（程序缺陷）」，否则修复会把原来的「每张图都失败」降级成「图片段彻底静默消失」，更难发现（对抗审计打穿）；④ 去掉 `Math.max(1000, budgetAt - Date.now())` 这层冗余误导防护（它防不住 NaN，还会把 <1s 的剩余预算静默抬到 1s）；⑤ 补 6 条回归：`DEFAULT_IMAGE_LIMITS` 字段齐全、`budgetInt` 兜底缺失时抛错、默认参数下 `downloadImages` 能下成功、以及**走 `collectImageLines`（`lib/index.js` 的生产入口）的集成用例** —— 后者要求桩 fetch 同时具备真实延迟**和**尊重 `AbortSignal`，缺任一条这个 bug 都测不出来（两种写法都实测过）。
 
 - **点头部鲸鱼图标报 `sidebarRight: no tab type is registered as "sessionSuperagent"`**（2026-11-26 真机）。官方：宿主 `sidebarRight` / `sidebarRightTabs` 晚于插件 `apply` 就绪，`openTab(kind)` 只认宿主注册表里 inForce 的 definition。我们：2.0.0 的「服务晚就绪重挂」只补挂了会话头部，右栏 definition 与 `sidebar.right.pane.tab` / `.title` 仍只在 `apply` 的 `ctx.effect` 里注册一次 —— 服务晚到的实例上它们从未注册，而头部已按新服务启用，点下去就由宿主抛错。为什么以前没发现：单测夹具的 `openTab` 不校验 kind，桩比宿主干净。（@iJetLi，PR #71）

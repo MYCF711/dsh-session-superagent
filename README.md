@@ -74,6 +74,8 @@ dsh plugin --profile desktop add dsh-session-superagent@0.10.2
 
 装完重载宿主。开发时用 `file:` 安装，新增文件后要跑 `pnpm run sync:profile`，否则插件会整体不挂载。
 
+Web profile 用 `--host <ipv4>` 绑定具体地址时，请用宿主实际监听的协议、IP 和端口直接打开面板。插件只接受同源面板写入；经过反向代理改写来源或终止 TLS 的部署不在此支持范围内。来源校验不代替宿主鉴权。
+
 ## 快速开始
 
 在会话里让 agent 调用：
@@ -172,7 +174,7 @@ Gitee 没有 ETag，每轮会真读一次列表；私有仓库需要在面板里
 
 ## 验证
 
-已通过 1491 项单测、20 房边界、11 项 UI 静态审计（2.0.1）。隔离 preflight **exit 0：41 PASS + 3 个预期 SKIP**，profile 0 漂移；2.0.1 headless 实例启动、重挂 interval 与 12 工具通过。新导航真实 Chromium **18/18**：旧中栏缺席、会话隔离、全局目标会话新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过。两组双盲均已签收：核心 25 请求与 10 类跨会话写保护零发现，UI 原四项复核全部 CLOSED。用户已确认整版 UI 并允许推实验仓；已合入主仓 main，tag / Release / npm 同批发。
+当前共 1493 项单测；以下为 2.0.1 的验证记录：20 房边界、11 项 UI 静态审计。隔离 preflight **exit 0：41 PASS + 3 个预期 SKIP**，profile 0 漂移；2.0.1 headless 实例启动、重挂 interval 与 12 工具通过。新导航真实 Chromium **18/18**：旧中栏缺席、会话隔离、全局目标会话新建、头部 pressed/toggle/Tooltip、键盘、双主题与 700px 完整矩阵通过。两组双盲均已签收：核心 25 请求与 10 类跨会话写保护零发现，UI 原四项复核全部 CLOSED。用户已确认整版 UI 并允许推实验仓；已合入主仓 main，tag / Release / npm 同批发。
 
 ### 贡献归属门禁
 

@@ -24,10 +24,12 @@ const { apply, __test } = await import('../lib/index.js')
 
 const tools = []
 const routes = new Map()
+let listenerOrigin = 'http://127.0.0.1:65466'
 
 const ctx = {
   tools: { register: (tool) => tools.push(tool) },
   webServer: {
+    getOrigin: () => listenerOrigin,
     register: (route) => {
       routes.set(route.path, route)
       return () => {}
@@ -1817,18 +1819,71 @@ test('手改成 enabled:"false" / 0 的守要真的算暂停（不能只看 === 
   }
 })
 
-test('跨站写操作必须 403（T19：任意网页 text/plain 简单请求就能删守/清凭证）', async () => {
-  const post = (path, body, headers = {}) => call('POST', path, body, headers)
-  // 带恶意 Origin：拒绝
-  const evil = await post('/session-superagent/watch', { action: 'delete', id: 'x#y' }, { origin: 'https://evil.example' })
-  assert.equal(evil.statusCode, 403, '跨站写操作必须 403')
-  assert.match(String(evil.json().error || ''), /cross-origin/)
-  // 带本机 Origin：放行（未知 id 会走到正常错误路径）
-  const local = await post('/session-superagent/watch', { action: 'delete', id: 'x#y' }, { origin: 'http://127.0.0.1:65466' })
-  assert.notEqual(local.statusCode, 403, '本机来源不该被挡')
-  // 不带 Origin（curl / 测试）：放行
-  const none = await post('/session-superagent/watch', { action: 'delete', id: 'x#y' })
-  assert.notEqual(none.statusCode, 403, '非浏览器客户端不该被挡')
+test('非回环 IPv4 同源写入成功，Referer 回退与无来源 CLI 仍可用', async () => {
+  listenerOrigin = 'http://192.0.2.17:65466'
+  const host = '192.0.2.17:65466'
+  const path = '/session-superagent/watch'
+  try {
+    const created = await call('POST', path, { repo: 'o/ipv4-origin', sessionId: 's1' }, { host, origin: listenerOrigin })
+    assert.equal(created.statusCode, 200)
+    const { id } = created.json()
+    const paused = await call('POST', path, { action: 'pause', id }, { host, referer: listenerOrigin + '/?panel=1' })
+    assert.equal(paused.statusCode, 200)
+    const { watchers } = (await call('GET', '/session-superagent/state')).json()
+    assert.equal(watchers.find((watcher) => watcher.id === id)?.enabled, false)
+    const deleted = await call('POST', path, { action: 'delete', id }, { host })
+    assert.equal(deleted.json().deleted, true)
+  } finally {
+    listenerOrigin = 'http://127.0.0.1:65466'
+  }
+})
+
+test('跨站或无效来源写入必须 403 且状态不变（T19）', async () => {
+  const host = '127.0.0.1:65466'
+  const origin = 'http://' + host
+  const before = (await call('GET', '/session-superagent/state')).json().watchers
+  for (const headers of [
+    { host, origin: 'https://evil.example', 'content-type': 'text/plain' },
+    { host, origin: 'https://' + host },
+    { host, origin: 'http://127.0.0.1:65467' },
+    { host, origin: 'http://localhost:65466' },
+    { host, origin: 'null', referer: origin + '/' },
+    { host, origin: '' },
+    { host, origin: origin + '/' },
+    { host, origin: origin + ', ' + origin },
+    { host, origin: [origin, origin] },
+    { origin },
+    { host: 'other.example', origin: 'http://other.example', 'x-forwarded-host': host },
+    { host, 'sec-fetch-site': 'cross-site' },
+    { host, 'sec-fetch-site': 'same-site' },
+    { host, origin, 'sec-fetch-site': 'cross-site' },
+  ]) {
+    const res = await call('POST', '/session-superagent/watch', { repo: 'o/rejected-origin', sessionId: 's1' }, headers)
+    assert.equal(res.statusCode, 403, JSON.stringify(headers))
+    assert.equal(res.json().error, 'cross-origin request refused')
+  }
+  assert.deepEqual((await call('GET', '/session-superagent/state')).json().watchers, before)
+})
+
+test('回环支持同源 localhost 和 IPv6，宿主来源不可用时拒绝浏览器写入', async () => {
+  const path = '/session-superagent/tickets'
+  try {
+    for (const [listener, authority] of [
+      ['http://127.0.0.1:65466', '127.0.0.1:65466'],
+      ['http://127.0.0.1:65466', 'localhost:65466'],
+      ['http://[::1]:65466', '[::1]:65466'],
+      ['https://192.0.2.17:443', '192.0.2.17'],
+    ]) {
+      listenerOrigin = listener
+      const res = await call('POST', path, {}, { host: authority, origin: new URL(listener).protocol + '//' + authority })
+      assert.equal(res.statusCode, 400, authority)
+      assert.match(res.json().error, /^action must be /)
+    }
+    listenerOrigin = undefined
+    assert.equal((await call('POST', path, {}, { host: '127.0.0.1:65466', origin: 'http://127.0.0.1:65466' })).statusCode, 403)
+  } finally {
+    listenerOrigin = 'http://127.0.0.1:65466'
+  }
 })
 
 test('守数量有上限（T19：100 次 POST 就是 100 条守，每条一个定时器）', async () => {
